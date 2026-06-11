@@ -8,7 +8,22 @@ from conftest import make_result, make_score
 
 from jp_stock_analysis.analysis.signal_engine import generate_signal, generate_signals
 from jp_stock_analysis.config import DEFAULT_DISCLAIMER, AnalysisConfig
-from jp_stock_analysis.schemas import RiskFlag, StockAnalysisResult
+from jp_stock_analysis.schemas import RiskFlag, SectorRelativeMetrics, StockAnalysisResult
+
+
+def _sector_relative(
+    ticker: str = "7203",
+    score: float = 95.0,
+    peer_count: int = 5,
+    confidence: float = 100.0,
+) -> SectorRelativeMetrics:
+    return SectorRelativeMetrics(
+        ticker=ticker,
+        sector="輸送用機器",
+        peer_count=peer_count,
+        sector_relative_score=score,
+        confidence_score=confidence,
+    )
 
 ANALYSIS_ONLY = AnalysisConfig()
 SCREENING = AnalysisConfig(signal_mode="screening")
@@ -139,6 +154,71 @@ def test_neutral_profile_yields_hold_signal():
     )
     signal = generate_signal(result, TRADE_SIGNAL)
     assert signal is not None and signal.label == "hold_signal"
+
+
+def test_sector_relative_plus_valuation_cannot_buy():
+    """High valuation + high sector-relative with no core factors must not buy."""
+    result = make_result(
+        "7203",
+        signal_mode="trade_signal",
+        score=make_score(
+            final_score=90.0,
+            confidence_score=85.0,
+            quality_score=None,
+            growth_score=None,
+            momentum_score=None,
+            disclosure_score=None,
+            valuation_score=95.0,
+            risk_score=5.0,
+        ),
+    )
+    result.sector_relative = _sector_relative(score=95.0, peer_count=5)
+    signal = generate_signal(result, TRADE_SIGNAL)
+    assert signal is not None
+    assert signal.label != "buy_signal"
+    # the factor may appear, but only as labelled evidence
+    sector_factors = [
+        f for f in signal.supporting_factors if f.startswith("sector_relative_score=")
+    ]
+    assert len(sector_factors) == 1
+    assert "supporting evidence only" in sector_factors[0]
+
+
+def test_eligible_sector_factor_is_appended_to_buy_signal():
+    result = _strong_result()
+    result.sector_relative = _sector_relative(score=92.9, peer_count=5)
+    signal = generate_signal(result, TRADE_SIGNAL)
+    assert signal is not None
+    assert signal.label == "buy_signal"  # decided by core factors, unchanged
+    core = [f for f in signal.supporting_factors if not f.startswith("sector_relative_score=")]
+    assert len(core) >= 2
+    assert any("sector_relative_score=92.9" in f for f in signal.supporting_factors)
+
+
+def test_sector_factor_requires_peers_score_and_confidence():
+    cases = [
+        _sector_relative(score=95.0, peer_count=2),  # too few peers
+        _sector_relative(score=60.0, peer_count=5),  # score below threshold
+        _sector_relative(score=95.0, peer_count=5, confidence=30.0),  # low confidence
+        SectorRelativeMetrics(  # score unavailable
+            ticker="7203", sector="輸送用機器", peer_count=5, confidence_score=100.0
+        ),
+    ]
+    for relative in cases:
+        result = _strong_result()
+        result.sector_relative = relative
+        signal = generate_signal(result, TRADE_SIGNAL)
+        assert signal is not None
+        assert not any(
+            f.startswith("sector_relative_score=") for f in signal.supporting_factors
+        ), relative
+
+
+def test_sector_relative_never_creates_signal_outside_trade_signal_mode():
+    result = _strong_result()
+    result.sector_relative = _sector_relative()
+    assert generate_signal(result, ANALYSIS_ONLY) is None
+    assert generate_signal(result, SCREENING) is None
 
 
 def test_missing_risk_assessment_blocks_buy():

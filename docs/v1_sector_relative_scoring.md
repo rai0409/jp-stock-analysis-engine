@@ -82,19 +82,46 @@ warnings, 6m momentum fallback, lone-sector / missing-metadata absence, small
 peer-group confidence, determinism, final-score immutability, CLI behavior with
 and without shared sectors (JSON/Markdown/CSV).
 
+## Larger synthetic universe (validation)
+
+A 12-code synthetic jquants-cache universe now lives under
+`tests/fixtures/jquants_universe/` for offline validation at a realistic
+scale (see `docs/v1_sector_relative_universe_validation.md`):
+
+- 輸送用機器 — 5 companies (`7001`–`7005`, designed strong→weak gradient)
+- 電気機器 — 4 companies (`6501`–`6504`, same gradient pattern)
+- 情報・通信業 — 2 companies (`9001`, `9002`; small-peer-group case)
+- `9101` — prices/statements but no `listed_info` (missing-sector case)
+
+`tests/test_sector_universe.py` proves peer counts, gradient-consistent
+rankings, determinism, safe degradation, and that `final_score` and
+trade-signal behavior are untouched by sector-relative attachment.
+
+## Peer-count requirements
+
+- Minimum 2 same-sector companies in the analyzed universe, or no
+  sector-relative metrics are produced at all.
+- Fewer than 4 peers ⇒ explicit "small sector peer group" warning and a
+  proportionally reduced confidence score; 2-company sectors can only produce
+  0/50/100 percentiles and should be read as coarse direction, not ranking.
+
 ## Limitations
 
 - Peer group = current analysis universe, which may be tiny; percentiles with
-  2–3 peers are coarse (warned).
+  2–3 peers are coarse (warned, confidence-scaled).
 - Sector strings must match exactly; no sector-code normalization in v1
   (J-Quants `Sector33CodeName` vs local CSV labels must agree to group).
-- `sector_relative_score` does not feed `final_score`, screening labels, or
-  trade signals yet — by design until validated against a larger universe.
+- **`sector_relative_score` is still NOT used in `final_score` or screening
+  labels.** In `trade_signal` mode it now appears as *supporting evidence
+  only* (score ≥ 70, ≥ 4 peers, confidence ≥ 50): the factor string is
+  appended after the signal label is decided and never counts toward the
+  two-core-factor buy requirement — see
+  `docs/v1_sector_relative_signal_support.md`.
+- **J-Quants live validation remains deferred** (HTTP 403); all validation
+  uses synthetic cache fixtures.
 
 ## Next recommended step
 
-Wire `sector_relative_score` into the signal engine as *supporting evidence
-only* (e.g. listing it in `supporting_factors` when ≥ 70 with ≥ 4 peers) once
-a realistically sized universe (10+ tickers per sector from jquants-cache) has
-been exercised — keeping it out of `final_score` and never sufficient for a
-buy on its own.
+Promote the sector-support eligibility constants (70 / 4 peers / 50
+confidence) into `SignalThresholds` config fields so they can be tuned
+without code changes, keeping today's values as the defaults.

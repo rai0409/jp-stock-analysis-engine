@@ -5,8 +5,13 @@ Signals are produced ONLY when ``config.signal_mode == "trade_signal"``;
 
 A ``buy_signal`` requires multiple confirming dimensions: high final score,
 sufficient confidence, acceptable risk score, no critical risk flag, and at
-least two supporting factors from quality/growth/momentum/disclosure. A high
-valuation score alone can therefore never produce a buy signal.
+least two CORE supporting factors from quality/growth/momentum/disclosure.
+A high valuation score alone can therefore never produce a buy signal.
+
+Sector-relative strength is supporting evidence only: when eligible (score
+>= 70, >= 4 sector peers, adequate confidence) it is appended to
+``supporting_factors`` AFTER the label is decided, and it never counts toward
+the two-core-factor buy requirement.
 
 No position sizing, broker execution, or portfolio optimization.
 """
@@ -17,10 +22,17 @@ from jp_stock_analysis.config import AnalysisConfig
 from jp_stock_analysis.schemas import SignalResult, StockAnalysisResult, TradeSignalLabel
 
 _SUPPORT_THRESHOLD = 60.0
+_SECTOR_SUPPORT_THRESHOLD = 70.0
+_SECTOR_SUPPORT_MIN_PEERS = 4
+_SECTOR_SUPPORT_MIN_CONFIDENCE = 50.0
 
 
 def _supporting_factors(result: StockAnalysisResult) -> list[str]:
-    """Non-valuation positive confirmations. Valuation is deliberately excluded."""
+    """Core confirmations counting toward the buy gate.
+
+    Valuation and sector-relative metrics are deliberately excluded: neither
+    may contribute to the two-factor buy requirement.
+    """
     score = result.score
     if score is None:
         return []
@@ -38,6 +50,24 @@ def _supporting_factors(result: StockAnalysisResult) -> list[str]:
             f"disclosure positive findings: {result.disclosure.positive_count}"
         )
     return factors
+
+
+def _sector_relative_factor(result: StockAnalysisResult) -> str | None:
+    """Evidence-only sector-relative factor; never satisfies the buy gate."""
+    relative = result.sector_relative
+    if relative is None or relative.sector_relative_score is None:
+        return None
+    if (
+        relative.sector_relative_score >= _SECTOR_SUPPORT_THRESHOLD
+        and relative.peer_count >= _SECTOR_SUPPORT_MIN_PEERS
+        and relative.confidence_score >= _SECTOR_SUPPORT_MIN_CONFIDENCE
+    ):
+        return (
+            f"sector_relative_score={relative.sector_relative_score} "
+            f"(>= {_SECTOR_SUPPORT_THRESHOLD:.0f}, {relative.peer_count} peers; "
+            "supporting evidence only)"
+        )
+    return None
 
 
 def _evidence(result: StockAnalysisResult) -> list[str]:
@@ -150,6 +180,10 @@ def generate_signal(result: StockAnalysisResult, config: AnalysisConfig) -> Sign
             "or avoid trigger."
         )
 
+    # appended only after the label was decided from core factors alone
+    sector_factor = _sector_relative_factor(result)
+    display_factors = [*supporting, sector_factor] if sector_factor else supporting
+
     return SignalResult(
         ticker=result.ticker,
         label=label,
@@ -157,7 +191,7 @@ def generate_signal(result: StockAnalysisResult, config: AnalysisConfig) -> Sign
         rationale=rationale,
         evidence=_evidence(result),
         blocking_risks=blocking,
-        supporting_factors=supporting,
+        supporting_factors=display_factors,
         thresholds_used=thresholds_used,
         disclaimer=config.disclaimer,
     )
