@@ -16,6 +16,10 @@ from jp_stock_analysis.analysis.momentum import analyze_momentum
 from jp_stock_analysis.analysis.risk import analyze_risks
 from jp_stock_analysis.analysis.scoring import score_stock
 from jp_stock_analysis.analysis.screening import assign_screening_label, screen_stocks
+from jp_stock_analysis.analysis.sector_relative import (
+    attach_sector_relative,
+    compute_sector_relative,
+)
 from jp_stock_analysis.analysis.signal_engine import generate_signal, generate_signals
 from jp_stock_analysis.analysis.valuation import analyze_valuation, classify_valuation
 
@@ -29,7 +33,9 @@ __all__ = [
     "analyze_risks",
     "analyze_valuation",
     "assign_screening_label",
+    "attach_sector_relative",
     "classify_valuation",
+    "compute_sector_relative",
     "generate_signal",
     "generate_signals",
     "pct_change",

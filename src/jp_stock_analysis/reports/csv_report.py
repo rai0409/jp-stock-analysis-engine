@@ -57,10 +57,13 @@ def write_screening_csv(
     include_signal = any(
         result.signal is not None for result in results
     )
+    include_sector = any(result.sector_relative is not None for result in results)
 
     columns = list(_BASE_COLUMNS)
+    if include_sector:
+        columns.insert(columns.index("confidence_score") + 1, "sector_relative_score")
     if include_label:
-        columns.insert(columns.index("confidence_score") + 1, "screening_label")
+        columns.insert(columns.index("warnings_count"), "screening_label")
     if include_signal:
         columns.insert(columns.index("warnings_count"), "trade_signal")
 
@@ -84,6 +87,12 @@ def write_screening_csv(
                 "confidence_score": entry.confidence_score,
                 "warnings_count": count_warnings(result) if result else 0,
             }
+            if include_sector:
+                row["sector_relative_score"] = (
+                    result.sector_relative.sector_relative_score
+                    if result and result.sector_relative is not None
+                    else ""
+                )
             if include_label:
                 row["screening_label"] = entry.screening_label or ""
             if include_signal:

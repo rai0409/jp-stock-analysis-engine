@@ -180,6 +180,10 @@ class DisclosureFinding(SchemaBase):
 
 class DisclosureAnalysisResult(ResultBase):
     ticker: str
+    # provenance propagated from the source DisclosureDocument; stable export
+    # paths for future RAG ingestion (see docs/future_rag_integration_separate_project.md)
+    document_type: str | None = None
+    fiscal_year: int | None = None
     analyzer: str = "rule_based"
     findings: list[DisclosureFinding] = Field(default_factory=list)
     positive_count: int = 0
@@ -215,6 +219,29 @@ class ScoreBreakdown(ResultBase):
     risk_score: float | None = None
     final_score: float | None = None
     reasons: dict[str, str] = Field(default_factory=dict)
+
+
+class SectorRelativeMetrics(ResultBase):
+    """Percentile ranks versus same-sector peers in the analyzed universe.
+
+    100 always means most favorable within the sector: lower-is-better
+    metrics (PER, PBR, risk score) are inverted before ranking.
+    ``sector_relative_score`` is the mean of available percentiles and is
+    kept separate from ``final_score``. ``peer_count`` is the number of
+    same-sector companies in the universe, including this one.
+    """
+
+    ticker: str
+    sector: str
+    peer_count: int = 0
+    per_percentile: float | None = None
+    pbr_percentile: float | None = None
+    revenue_growth_percentile: float | None = None
+    operating_margin_percentile: float | None = None
+    roe_percentile: float | None = None
+    momentum_percentile: float | None = None
+    risk_percentile: float | None = None
+    sector_relative_score: float | None = None
 
 
 class ScreeningResult(SchemaBase):
@@ -254,5 +281,6 @@ class StockAnalysisResult(ResultBase):
     disclosure: DisclosureAnalysisResult | None = None
     risks: RiskMetrics | None = None
     score: ScoreBreakdown | None = None
+    sector_relative: SectorRelativeMetrics | None = None
     screening_label: ScreeningLabel | None = None
     signal: SignalResult | None = None

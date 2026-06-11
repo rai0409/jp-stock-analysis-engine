@@ -35,6 +35,7 @@ from jp_stock_analysis.analysis.momentum import analyze_momentum
 from jp_stock_analysis.analysis.risk import analyze_risks
 from jp_stock_analysis.analysis.scoring import score_stock
 from jp_stock_analysis.analysis.screening import screen_stocks
+from jp_stock_analysis.analysis.sector_relative import attach_sector_relative
 from jp_stock_analysis.analysis.signal_engine import generate_signals
 from jp_stock_analysis.analysis.valuation import analyze_valuation
 from jp_stock_analysis.config import AnalysisConfig
@@ -149,6 +150,7 @@ def analyze_data(
         )
         for ticker in tickers
     ]
+    attach_sector_relative(results, metadata)
 
     screening = screen_stocks(results, config)
     if config.signal_mode in ("screening", "trade_signal"):

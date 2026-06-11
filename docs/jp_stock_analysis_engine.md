@@ -79,6 +79,11 @@ Common column aliases are normalized automatically (`code`/`symbol` → ticker,
   one-time factors, uncertainty). Every finding carries `evidence_text`,
   `category`, `severity`, `confidence`, and `rule_id`. A `NoOpLLM` analyzer
   exists as a future opt-in extension point; no LLM or network is required.
+- **Sector-relative** (`analysis/sector_relative.py`): optional percentile
+  ranks (PER, PBR, revenue growth, operating margin, ROE, momentum, risk)
+  against same-sector peers in the analyzed universe, when company metadata
+  provides matching sectors. Reported separately from `final_score`; see
+  `docs/v1_sector_relative_scoring.md`.
 - **Risk** (`analysis/risk.py`): evidence-backed flags (negative EPS,
   declining revenue/operating income, expensive valuation with weak growth,
   low equity ratio, high volatility, large drawdown, negative disclosure tone,

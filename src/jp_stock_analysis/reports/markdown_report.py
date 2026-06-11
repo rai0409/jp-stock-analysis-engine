@@ -201,6 +201,29 @@ def _score_section(result: StockAnalysisResult) -> list[str]:
     return lines
 
 
+def _sector_relative_section(result: StockAnalysisResult) -> list[str]:
+    s = result.sector_relative
+    if s is None:
+        return ["No sector-relative data available."]
+    lines = [
+        f"Sector: {s.sector} — {s.peer_count} same-sector companies in this universe. "
+        "100 = most favorable within the sector. "
+        "Sector-relative score is reported separately from the final score.",
+        "",
+        "| Metric | Percentile |",
+        "|---|---|",
+        f"| PER (cheaper = higher) | {_fmt(s.per_percentile, digits=1)} |",
+        f"| PBR (cheaper = higher) | {_fmt(s.pbr_percentile, digits=1)} |",
+        f"| Revenue growth | {_fmt(s.revenue_growth_percentile, digits=1)} |",
+        f"| Operating margin | {_fmt(s.operating_margin_percentile, digits=1)} |",
+        f"| ROE | {_fmt(s.roe_percentile, digits=1)} |",
+        f"| Momentum (3m, else 6m) | {_fmt(s.momentum_percentile, digits=1)} |",
+        f"| Risk score (lower = higher) | {_fmt(s.risk_percentile, digits=1)} |",
+        f"| **Sector-relative score** | {_fmt(s.sector_relative_score, digits=1)} |",
+    ]
+    return lines
+
+
 def _signal_section(result: StockAnalysisResult) -> list[str]:
     signal = result.signal
     if signal is None:
@@ -290,6 +313,8 @@ def render_markdown_report(result: StockAnalysisResult, config: AnalysisConfig) 
         ("Risk Flags", _risk_section(result)),
         ("Integrated Score", _score_section(result)),
     ]
+    if result.sector_relative is not None:
+        sections.append(("Sector Relative", _sector_relative_section(result)))
     if result.signal_mode in ("screening", "trade_signal"):
         label = result.screening_label or "not assigned"
         sections.append(("Screening", [f"Screening label: `{label}`"]))
