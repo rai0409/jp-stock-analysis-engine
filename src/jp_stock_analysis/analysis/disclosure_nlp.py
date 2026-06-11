@@ -28,6 +28,11 @@ _MAX_EVIDENCE_CHARS = 200
 _SENTENCE_SPLIT = re.compile(r"[。\n]+")
 
 
+def _document_source_metadata(document: DisclosureDocument) -> dict[str, str]:
+    """Provenance for results: provider metadata wins over the bare source path."""
+    return {"source": document.source or "unknown", **document.source_metadata}
+
+
 @runtime_checkable
 class DisclosureNLPProvider(Protocol):
     """Anything that turns a disclosure document into an analysis result."""
@@ -212,9 +217,12 @@ class RuleBasedDisclosureAnalyzer:
         if not text.strip():
             return DisclosureAnalysisResult(
                 ticker=document.ticker,
+                document_type=document.document_type,
+                fiscal_year=document.fiscal_year,
                 analyzer="rule_based",
-                warnings=["empty disclosure text: no findings"],
+                warnings=[*document.warnings, "empty disclosure text: no findings"],
                 confidence_score=0.0,
+                source_metadata=_document_source_metadata(document),
             )
 
         sentences = [s.strip() for s in _SENTENCE_SPLIT.split(text) if s.strip()]
@@ -240,7 +248,7 @@ class RuleBasedDisclosureAnalyzer:
                     if counter:
                         counts[counter] += 1
 
-        warnings: list[str] = []
+        warnings: list[str] = list(document.warnings)
         if not findings:
             warnings.append("no rule matched the disclosure text: coverage limited")
             confidence = 30.0
@@ -252,12 +260,14 @@ class RuleBasedDisclosureAnalyzer:
 
         return DisclosureAnalysisResult(
             ticker=document.ticker,
+            document_type=document.document_type,
+            fiscal_year=document.fiscal_year,
             analyzer="rule_based",
             findings=findings,
             tone_score=max(-100.0, min(100.0, tone)),
             warnings=warnings,
             confidence_score=round(confidence, 1),
-            source_metadata={"source": document.source or "unknown"},
+            source_metadata=_document_source_metadata(document),
             **counts,
         )
 
@@ -272,6 +282,8 @@ class NoOpLLMDisclosureAnalyzer:
     def analyze(self, document: DisclosureDocument) -> DisclosureAnalysisResult:
         return DisclosureAnalysisResult(
             ticker=document.ticker,
+            document_type=document.document_type,
+            fiscal_year=document.fiscal_year,
             analyzer="noop_llm",
             warnings=["LLM-based disclosure analysis is not enabled; no findings produced"],
             confidence_score=0.0,

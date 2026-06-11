@@ -1,0 +1,28 @@
+{
+  "doc_id": "S100TEST1",
+  "target_date": "2026-06-04",
+  "edinet_code": "E00001",
+  "sec_code": "72030",
+  "company_name": "サンプル自動車株式会社",
+  "filing_type_key": "annual_securities_report",
+  "document_type": "annual_securities_report",
+  "form_code": "030000",
+  "doc_type_code": "120",
+  "fiscal_year": 2025,
+  "source_paths": {
+    "original_zip": "raw/S100TEST1/original.zip",
+    "document_pdf": "raw/S100TEST1/document.pdf",
+    "csv_zip": "raw/S100TEST1/csv.zip",
+    "list_response_json": "raw/2026-06-04/list_response.json"
+  },
+  "xbrl_facts_summary": {
+    "facts_count": 1234,
+    "contexts_count": 56,
+    "units_count": 7
+  },
+  "key_facts_sample": [
+    {"name": "jpcrp_cor:NetSalesSummaryOfBusinessResults", "value": "1000000"}
+  ],
+  "future_unknown_field": "must be tolerated",
+  "text": "当連結会計年度は販売台数の伸長により増収となりました。価格改定が寄与し、増益を達成しました。通期の業績予想については上方修正を行いました。なお、為替変動が業績に影響を及ぼす可能性があります。"
+}

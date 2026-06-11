@@ -20,6 +20,15 @@ J-Quants cache example (offline, no API key needed):
 J-Quants API (requires the JQUANTS_API_KEY environment variable) and writes
 it to the cache. The default provider remains ``local`` and the default mode
 remains ``analysis_only``; ``trade_signal`` is explicit opt-in.
+
+Disclosures can alternatively come from a topix1000_disclosure_platform
+export (file-based, offline; see docs/topix1000_export_provider.md):
+
+    python -m jp_stock_analysis.cli analyze \\
+        --prices tests/fixtures/prices_sample.csv \\
+        --disclosure-provider topix1000-export \\
+        --topix1000-export-dir tests/fixtures/topix1000_export \\
+        --output-dir /tmp/out
 """
 
 from __future__ import annotations
@@ -47,6 +56,7 @@ from jp_stock_analysis.providers.local_csv import (
     load_fundamentals_csv,
     load_prices_csv,
 )
+from jp_stock_analysis.providers.topix1000_export import Topix1000ExportProvider
 from jp_stock_analysis.reports.csv_report import write_screening_csv
 from jp_stock_analysis.reports.json_report import write_json_report
 from jp_stock_analysis.reports.markdown_report import write_markdown_report
@@ -226,6 +236,17 @@ def _load_jquants_inputs(
     return prices, fundamentals, metadata
 
 
+def _load_disclosures(args: argparse.Namespace) -> dict[str, DisclosureDocument]:
+    """Load disclosures from the selected disclosure provider."""
+    if args.disclosure_provider == "topix1000-export":
+        provider = Topix1000ExportProvider(args.topix1000_export_dir)
+        documents = provider.load_documents()
+        for warning in provider.warnings:
+            print(f"warning: {warning}", file=sys.stderr)
+        return documents
+    return load_disclosure_texts(args.disclosures) if args.disclosures else {}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jp_stock_analysis",
@@ -245,6 +266,19 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--fundamentals", default=None, help="path to fundamentals CSV")
     analyze.add_argument("--metadata", default=None, help="path to company metadata CSV")
     analyze.add_argument("--disclosures", default=None, help="directory of <ticker>.txt files")
+    analyze.add_argument(
+        "--disclosure-provider",
+        default="local",
+        choices=["local", "topix1000-export"],
+        help="disclosure source: local <ticker>.txt files (default) or a "
+        "topix1000_disclosure_platform export directory",
+    )
+    analyze.add_argument(
+        "--topix1000-export-dir",
+        default=None,
+        help="topix1000 export directory containing index.json "
+        "(required with --disclosure-provider topix1000-export)",
+    )
     analyze.add_argument("--output-dir", required=True, help="directory for generated reports")
     analyze.add_argument(
         "--signal-mode",
@@ -277,23 +311,22 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--provider local requires --prices")
     if args.provider != "local" and not args.jquants_code:
         parser.error(f"--provider {args.provider} requires at least one --jquants-code")
+    if args.disclosure_provider == "topix1000-export" and not args.topix1000_export_dir:
+        parser.error("--disclosure-provider topix1000-export requires --topix1000-export-dir")
+    if args.disclosure_provider == "topix1000-export" and args.disclosures:
+        parser.error("--disclosures applies to --disclosure-provider local only")
 
     try:
+        disclosures = _load_disclosures(args)
         if args.provider == "local":
-            outputs = run_analysis(
-                prices_path=args.prices,
-                output_dir=args.output_dir,
-                fundamentals_path=args.fundamentals,
-                metadata_path=args.metadata,
-                disclosures_dir=args.disclosures,
-                signal_mode=args.signal_mode,
-            )
+            prices = load_prices_csv(args.prices)
+            fundamentals = load_fundamentals_csv(args.fundamentals) if args.fundamentals else {}
+            metadata = load_company_metadata_csv(args.metadata) if args.metadata else {}
         else:
             prices, fundamentals, metadata = _load_jquants_inputs(args)
-            disclosures = load_disclosure_texts(args.disclosures) if args.disclosures else {}
-            outputs = analyze_data(
-                prices, fundamentals, metadata, disclosures, args.output_dir, args.signal_mode
-            )
+        outputs = analyze_data(
+            prices, fundamentals, metadata, disclosures, args.output_dir, args.signal_mode
+        )
     except JPStockAnalysisError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

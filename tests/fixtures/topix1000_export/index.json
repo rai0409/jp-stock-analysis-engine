@@ -1,0 +1,8 @@
+{
+  "export_version": 1,
+  "generated_for": "synthetic test fixture (no real EDINET content)",
+  "documents": [
+    {"doc_id": "S100TEST1", "path": "disclosures/S100TEST1.json"},
+    {"doc_id": "S100TEST2", "path": "disclosures/S100TEST2.json"}
+  ]
+}

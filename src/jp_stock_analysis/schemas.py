@@ -103,13 +103,25 @@ class CompanyMetadata(SchemaBase):
 
 
 class DisclosureDocument(SchemaBase):
-    """Raw disclosure text (earnings summary, securities report excerpt, etc.)."""
+    """Raw disclosure text (earnings summary, securities report excerpt, etc.).
+
+    ``text`` may be empty for metadata-only documents (e.g. a topix1000 export
+    entry whose text extraction has not run yet); analyzers must then degrade
+    to low confidence instead of fabricating content. ``warnings`` carries
+    provider-side caveats and ``source_metadata`` provenance (doc ids, source
+    archive paths) that analyzers propagate into their results.
+    """
 
     ticker: str
-    text: str
+    text: str = ""
     document_type: str | None = None
     fiscal_year: int | None = None
     source: str | None = None
+    doc_id: str | None = None
+    edinet_code: str | None = None
+    company_name: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    source_metadata: dict[str, str] = Field(default_factory=dict)
 
 
 class ResultBase(SchemaBase):
