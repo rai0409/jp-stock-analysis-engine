@@ -60,15 +60,42 @@ JQUANTS_API_KEY=... python -m jp_stock_analysis.cli analyze \
 - Prices are mandatory per code; missing statement/metadata caches degrade to
   stderr warnings, mirroring optional local inputs.
 
+## Endpoint configuration (probe findings)
+
+A live probe (see `tools/jquants_probe.py` and
+`docs/v1_jquants_endpoint_diagnosis.md`) showed that the default
+`/v2/prices/daily_quotes` path returns HTTP 403
+"The requested endpoint does not exist", and that the API key must **not** be
+sent as a Bearer token (the service rejects `Authorization: Bearer <api-key>`
+as malformed). The provider therefore:
+
+- keeps sending the key as the `x-api-key` header only;
+- makes every endpoint component configurable without code changes
+  (explicit constructor arguments win over the environment):
+
+| Environment variable | Default |
+|---|---|
+| `JQUANTS_API_BASE_URL` | `https://api.jquants.com` |
+| `JQUANTS_API_VERSION` | `v2` |
+| `JQUANTS_DAILY_QUOTES_PATH` | `/prices/daily_quotes` |
+| `JQUANTS_STATEMENTS_PATH` | `/fins/statements` |
+| `JQUANTS_LISTED_INFO_PATH` | `/listed/info` |
+
+Resolved URL: `<base>/<version><path>`. Verify the correct values against the
+official spec (https://jpx-jquants.com/spec/) before live use. When the
+service answers "endpoint does not exist" or rejects the Authorization
+header, the provider raises a `ProviderError` that names the relevant
+override variables; error messages never contain the API key. Cache reads
+ignore endpoint configuration entirely.
+
 ## Field-mapping assumptions
 
-Endpoint paths, the `x-api-key` auth header, and response field names are
-adapter-level assumptions isolated in `_DATASETS` and the `_map_*` helpers of
-`jquants.py` — re-check the official J-Quants V2 documentation before first
-live use. Notable mappings: `AdjustmentClose` → `adjusted_close`,
-`NetSales` → `revenue`, `Profit` → `net_income`, fiscal year = calendar year
-the reporting period ends in. J-Quants statements have no capital-expenditure
-column, so `capital_expenditure` stays `None` (never fabricated).
+Response field names are adapter-level assumptions isolated in `_DATASETS`
+and the `_map_*` helpers of `jquants.py`. Notable mappings:
+`AdjustmentClose` → `adjusted_close`, `NetSales` → `revenue`,
+`Profit` → `net_income`, fiscal year = calendar year the reporting period
+ends in. J-Quants statements have no capital-expenditure column, so
+`capital_expenditure` stays `None` (never fabricated).
 
 ## Tests are offline
 

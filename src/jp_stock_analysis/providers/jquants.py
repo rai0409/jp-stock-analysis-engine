@@ -14,23 +14,39 @@ Design:
   ``CompanyMetadata`` schemas. Missing fields stay ``None`` — never fabricated.
 
 Adapter assumptions (isolated in the ``_map_*`` helpers and ``_DATASETS``
-table; re-check the official J-Quants V2 documentation before live use):
+table; verify against the official spec at https://jpx-jquants.com/spec/
+before live use):
 
-- base URL ``https://api.jquants.com/v2``; the API key is sent as the
-  ``x-api-key`` request header
-- endpoints ``/prices/daily_quotes``, ``/fins/statements``, ``/listed/info``
-  take a ``code`` query parameter and paginate via ``pagination_key``
+- the API key is sent as the ``x-api-key`` request header. It is NOT a
+  Bearer token: a live probe showed ``Authorization: Bearer <api-key>`` is
+  rejected as malformed.
+- default endpoints ``/v2/prices/daily_quotes``, ``/v2/fins/statements``,
+  ``/v2/listed/info`` with a ``code`` query parameter and ``pagination_key``
+  pagination. A live probe of ``/v2/prices/daily_quotes`` returned HTTP 403
+  "The requested endpoint does not exist", so the exact version/paths are
+  UNVERIFIED — they are configurable without code changes via environment
+  variables (checked at construction time; explicit constructor arguments
+  win over the environment):
+
+  - ``JQUANTS_API_BASE_URL``      (default ``https://api.jquants.com``)
+  - ``JQUANTS_API_VERSION``       (default ``v2``)
+  - ``JQUANTS_DAILY_QUOTES_PATH`` (default ``/prices/daily_quotes``)
+  - ``JQUANTS_STATEMENTS_PATH``   (default ``/fins/statements``)
+  - ``JQUANTS_LISTED_INFO_PATH``  (default ``/listed/info``)
+
 - response rows live under ``daily_quotes`` / ``statements`` / ``info``
 - numeric fields may arrive as strings; empty strings mean missing
 
-J-Quants raw data must not be redistributed; cache files are for local use
-only and are not committed (tests use synthetic cache fixtures).
+Error messages never contain the API key. J-Quants raw data must not be
+redistributed; cache files are for local use only and are not committed
+(tests use synthetic cache fixtures).
 """
 
 from __future__ import annotations
 
 import json
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -42,15 +58,21 @@ from jp_stock_analysis.errors import ProviderError
 from jp_stock_analysis.schemas import CompanyMetadata, FinancialStatement, PriceBar
 
 ENV_API_KEY = "JQUANTS_API_KEY"
-DEFAULT_BASE_URL = "https://api.jquants.com/v2"
+ENV_BASE_URL = "JQUANTS_API_BASE_URL"
+ENV_API_VERSION = "JQUANTS_API_VERSION"
+DEFAULT_BASE_URL = "https://api.jquants.com"
+DEFAULT_API_VERSION = "v2"
 DEFAULT_CACHE_DIR = ".cache/jquants"
+SPEC_URL = "https://jpx-jquants.com/spec/"
 
-# dataset name -> (endpoint path, key holding the rows in the response)
+# dataset name -> (default endpoint path, response rows key, path override env var)
 _DATASETS = {
-    "daily_quotes": ("/prices/daily_quotes", "daily_quotes"),
-    "statements": ("/fins/statements", "statements"),
-    "listed_info": ("/listed/info", "info"),
+    "daily_quotes": ("/prices/daily_quotes", "daily_quotes", "JQUANTS_DAILY_QUOTES_PATH"),
+    "statements": ("/fins/statements", "statements", "JQUANTS_STATEMENTS_PATH"),
+    "listed_info": ("/listed/info", "info", "JQUANTS_LISTED_INFO_PATH"),
 }
+
+_PATH_ENV_VARS = ", ".join(env_name for _, _, env_name in _DATASETS.values())
 
 # FinancialStatement field -> candidate J-Quants column names, first match wins.
 # capital_expenditure has no direct J-Quants statements column and stays None.
@@ -163,14 +185,30 @@ class JQuantsProvider:
         cache_dir: str | Path = DEFAULT_CACHE_DIR,
         live: bool = False,
         api_key: str | None = None,
-        base_url: str = DEFAULT_BASE_URL,
+        base_url: str | None = None,
+        api_version: str | None = None,
+        endpoint_paths: dict[str, str] | None = None,
         http_get: Callable[[str, dict[str, str]], dict[str, Any]] | None = None,
     ) -> None:
         self.cache_dir = Path(cache_dir)
         self.live = live
         self._api_key = api_key if api_key is not None else os.environ.get(ENV_API_KEY)
-        self.base_url = base_url.rstrip("/")
+        self.base_url = (
+            base_url or os.environ.get(ENV_BASE_URL) or DEFAULT_BASE_URL
+        ).rstrip("/")
+        self.api_version = (
+            api_version or os.environ.get(ENV_API_VERSION) or DEFAULT_API_VERSION
+        ).strip("/")
+        overrides = endpoint_paths or {}
+        self._endpoint_paths: dict[str, str] = {}
+        for dataset, (default_path, _rows_key, env_name) in _DATASETS.items():
+            path = overrides.get(dataset) or os.environ.get(env_name) or default_path
+            self._endpoint_paths[dataset] = path if path.startswith("/") else f"/{path}"
         self._http_get = http_get or _urllib_get_json
+
+    def endpoint_url(self, dataset: str) -> str:
+        """Resolved endpoint URL (base / version / path, all overridable)."""
+        return f"{self.base_url}/{self.api_version}{self._endpoint_paths[dataset]}"
 
     def cache_path(self, dataset: str, code: str) -> Path:
         """Deterministic cache file location for one dataset/code pair."""
@@ -234,22 +272,60 @@ class JQuantsProvider:
                 f"live J-Quants fetch requested but the {ENV_API_KEY} environment "
                 "variable is not set; export it or use cached data."
             )
-        endpoint, rows_key = _DATASETS[dataset]
+        rows_key = _DATASETS[dataset][1]
         rows: list[dict[str, Any]] = []
         pagination_key: str | None = None
         while True:
             query = {"code": code, **{k: v for k, v in params.items() if v}}
             if pagination_key:
                 query["pagination_key"] = pagination_key
-            url = f"{self.base_url}{endpoint}?{urllib.parse.urlencode(query)}"
+            url = f"{self.endpoint_url(dataset)}?{urllib.parse.urlencode(query)}"
             try:
+                # the key travels only in the x-api-key header (it is not a Bearer token)
                 payload = self._http_get(url, {"x-api-key": self._api_key})
+            except urllib.error.HTTPError as exc:
+                raise ProviderError(_describe_http_error(url, exc)) from exc
             except OSError as exc:
                 raise ProviderError(f"J-Quants request failed for {url}: {exc}") from exc
             rows.extend(payload.get(rows_key, []))
             pagination_key = payload.get("pagination_key")
             if not pagination_key:
                 return rows
+
+
+def _read_error_body(exc: urllib.error.HTTPError) -> str:
+    try:
+        raw = exc.read()
+    except (OSError, ValueError):
+        return ""
+    if not raw:
+        return ""
+    return raw.decode("utf-8", errors="replace")[:300]
+
+
+def _describe_http_error(url: str, exc: urllib.error.HTTPError) -> str:
+    """Classify HTTP failures into actionable messages. Never includes secrets."""
+    body = _read_error_body(exc)
+    lowered = body.lower()
+    if "endpoint does not exist" in lowered:
+        return (
+            f"J-Quants endpoint not found (HTTP {exc.code}) at {url}: the configured API "
+            "version or path does not match the service (observed for the default "
+            f"/{DEFAULT_API_VERSION} paths in a live probe). Check the official spec "
+            f"({SPEC_URL}) and override via {ENV_BASE_URL}, {ENV_API_VERSION}, or "
+            f"{_PATH_ENV_VARS}. Server response: {body}"
+        )
+    if "authorization" in lowered and ("malformed" in lowered or "bearer" in lowered):
+        return (
+            f"J-Quants rejected the Authorization header (HTTP {exc.code}) at {url}: the "
+            "API key is not a Bearer token. This provider sends the key as the x-api-key "
+            "header; do not place it in an Authorization header. "
+            f"Server response: {body}"
+        )
+    return (
+        f"J-Quants request failed (HTTP {exc.code}) at {url}. "
+        f"Server response: {body or '(empty)'}"
+    )
 
 
 def _urllib_get_json(url: str, headers: dict[str, str]) -> dict[str, Any]:

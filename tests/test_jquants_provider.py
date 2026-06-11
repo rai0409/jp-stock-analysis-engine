@@ -7,7 +7,9 @@ cache fixtures under tests/fixtures/jquants_cache/.
 
 from __future__ import annotations
 
+import io
 import json
+import urllib.error
 from datetime import date
 
 import pytest
@@ -15,9 +17,38 @@ from conftest import FIXTURES_DIR
 
 from jp_stock_analysis.cli import main
 from jp_stock_analysis.errors import ProviderError
-from jp_stock_analysis.providers.jquants import ENV_API_KEY, JQuantsProvider
+from jp_stock_analysis.providers.jquants import (
+    ENV_API_KEY,
+    ENV_API_VERSION,
+    ENV_BASE_URL,
+    JQuantsProvider,
+)
 
 CACHE_DIR = FIXTURES_DIR / "jquants_cache"
+
+_ENDPOINT_ENV_VARS = (
+    ENV_BASE_URL,
+    ENV_API_VERSION,
+    "JQUANTS_DAILY_QUOTES_PATH",
+    "JQUANTS_STATEMENTS_PATH",
+    "JQUANTS_LISTED_INFO_PATH",
+)
+
+
+@pytest.fixture(autouse=True)
+def _clean_endpoint_env(monkeypatch):
+    """Endpoint config must come from the test, not the developer's shell."""
+    for name in _ENDPOINT_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+
+def _raise_http_error(body: str, code: int = 403):
+    def transport(url: str, headers: dict[str, str]) -> dict:
+        raise urllib.error.HTTPError(
+            url, code, "Forbidden", None, io.BytesIO(body.encode("utf-8"))
+        )
+
+    return transport
 
 
 def _provider(**kwargs) -> JQuantsProvider:
@@ -130,6 +161,94 @@ def test_live_fetch_uses_injected_http_and_writes_cache(tmp_path, monkeypatch):
     assert len(json.loads(cache_file.read_text(encoding="utf-8"))) == 2
     offline = JQuantsProvider(cache_dir=tmp_path / "cache")  # live=False, no key
     assert len(offline.get_prices("7203")) == 2
+
+
+def test_default_endpoint_urls():
+    provider = _provider()
+    assert (
+        provider.endpoint_url("daily_quotes")
+        == "https://api.jquants.com/v2/prices/daily_quotes"
+    )
+    assert provider.endpoint_url("statements") == "https://api.jquants.com/v2/fins/statements"
+    assert provider.endpoint_url("listed_info") == "https://api.jquants.com/v2/listed/info"
+
+
+def test_endpoint_does_not_exist_maps_to_helpful_error(tmp_path):
+    probe_body = (
+        '{"message": "The requested endpoint does not exist. Please check the URL, '
+        'HTTP method, and API version:https://jpx-jquants.com/spec/"}'
+    )
+    provider = JQuantsProvider(
+        cache_dir=tmp_path / "empty",
+        live=True,
+        api_key="secret-key-123",
+        http_get=_raise_http_error(probe_body),
+    )
+    with pytest.raises(ProviderError) as err:
+        provider.get_prices("7203")
+    message = str(err.value)
+    assert "endpoint not found" in message
+    assert "version or path" in message
+    assert ENV_API_VERSION in message  # tells the user how to fix it
+    assert "JQUANTS_DAILY_QUOTES_PATH" in message
+    assert "jpx-jquants.com/spec" in message
+    assert "secret-key-123" not in message  # never leak the key
+
+
+def test_malformed_authorization_maps_to_helpful_error(tmp_path):
+    body = '{"message": "Invalid Authorization header: Bearer token is malformed"}'
+    provider = JQuantsProvider(
+        cache_dir=tmp_path / "empty",
+        live=True,
+        api_key="secret-key-123",
+        http_get=_raise_http_error(body),
+    )
+    with pytest.raises(ProviderError) as err:
+        provider.get_prices("7203")
+    message = str(err.value)
+    assert "not a Bearer token" in message
+    assert "x-api-key" in message
+    assert "secret-key-123" not in message
+
+
+def test_other_http_errors_report_status_and_body(tmp_path):
+    provider = JQuantsProvider(
+        cache_dir=tmp_path / "empty",
+        live=True,
+        api_key="k",
+        http_get=_raise_http_error('{"message": "rate limit"}', code=429),
+    )
+    with pytest.raises(ProviderError, match="HTTP 429"):
+        provider.get_prices("7203")
+
+
+def test_env_endpoint_overrides_change_request_url(tmp_path, monkeypatch):
+    monkeypatch.setenv(ENV_BASE_URL, "https://alt.example")
+    monkeypatch.setenv(ENV_API_VERSION, "v9")
+    monkeypatch.setenv("JQUANTS_DAILY_QUOTES_PATH", "/markets/daily")
+    calls: list[str] = []
+
+    def transport(url: str, headers: dict[str, str]) -> dict:
+        calls.append(url)
+        return {"daily_quotes": []}
+
+    provider = JQuantsProvider(cache_dir=tmp_path / "c", live=True, api_key="k",
+                               http_get=transport)
+    provider.get_prices("7203")
+    assert calls and calls[0].startswith("https://alt.example/v9/markets/daily?")
+    # constructor arguments win over the environment
+    explicit = JQuantsProvider(cache_dir=tmp_path / "c2", api_version="v1")
+    assert explicit.endpoint_url("daily_quotes").startswith("https://alt.example/v1/")
+
+
+def test_cache_first_never_touches_endpoint_config(monkeypatch):
+    monkeypatch.setenv(ENV_API_VERSION, "v999-does-not-exist")
+
+    def transport(url: str, headers: dict[str, str]) -> dict:
+        raise AssertionError("cache hit must not reach the network")
+
+    provider = JQuantsProvider(cache_dir=CACHE_DIR, http_get=transport)
+    assert len(provider.get_prices("7203")) == 80  # served from cache fixture
 
 
 def test_cli_jquants_cache_smoke(tmp_path, monkeypatch):
