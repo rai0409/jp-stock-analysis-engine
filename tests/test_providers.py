@@ -8,7 +8,6 @@ import pytest
 
 from jp_stock_analysis.errors import DataValidationError, ProviderError
 from jp_stock_analysis.providers.edinet_stub import EDINETProvider
-from jp_stock_analysis.providers.jquants_stub import JQuantsProvider
 from jp_stock_analysis.providers.local_csv import (
     load_company_metadata_csv,
     load_disclosure_texts,
@@ -95,10 +94,6 @@ def test_local_json_roundtrip_and_errors(tmp_path):
 
 
 def test_stub_providers_are_import_safe_but_unusable():
-    with pytest.raises(ProviderError):
-        JQuantsProvider().get_prices("7203")
-    with pytest.raises(ProviderError):
-        JQuantsProvider().get_statements("7203")
     with pytest.raises(ProviderError):
         EDINETProvider().get_disclosures("7203")
     with pytest.raises(ProviderError):

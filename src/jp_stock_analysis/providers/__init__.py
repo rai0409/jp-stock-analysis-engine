@@ -1,4 +1,5 @@
-"""Data providers: local CSV/JSON loaders and import-safe network stubs."""
+"""Data providers: local CSV/JSON loaders, the optional cache-first J-Quants
+provider, and import-safe stubs for future sources."""
 
 from jp_stock_analysis.providers.base import (
     DisclosureProvider,
@@ -7,7 +8,7 @@ from jp_stock_analysis.providers.base import (
     PriceDataProvider,
 )
 from jp_stock_analysis.providers.edinet_stub import EDINETProvider
-from jp_stock_analysis.providers.jquants_stub import JQuantsProvider
+from jp_stock_analysis.providers.jquants import JQuantsProvider
 from jp_stock_analysis.providers.local_csv import (
     load_company_metadata_csv,
     load_disclosure_texts,

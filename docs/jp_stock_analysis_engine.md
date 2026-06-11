@@ -52,11 +52,13 @@ Common column aliases are normalized automatically (`code`/`symbol` → ticker,
 `providers/base.py` defines `PriceDataProvider`, `FundamentalsProvider`,
 `MetadataProvider`, and `DisclosureProvider` protocols. v1 ships:
 
-- `local_csv.py` / `local_json.py` — the only working providers; local files only.
-- `jquants_stub.py`, `edinet_stub.py`, `tdnet_stub.py`, `news_stub.py` —
-  import-safe placeholders that raise `ProviderError` if used. They document
-  the intended future fields and keep network clients out of the dependency
-  tree.
+- `local_csv.py` / `local_json.py` — the default providers; local files only.
+- `jquants.py` — optional cache-first J-Quants V2 provider; offline against
+  `.cache/jquants/`, live fetch is explicit opt-in via `JQUANTS_API_KEY`.
+  See `docs/jquants_provider.md`.
+- `edinet_stub.py`, `tdnet_stub.py`, `news_stub.py` — import-safe placeholders
+  that raise `ProviderError` if used. They document the intended future fields
+  and keep network clients out of the dependency tree.
 
 ## Analysis Methods
 
