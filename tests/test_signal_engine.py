@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
 from conftest import make_result, make_score
 
 from jp_stock_analysis.analysis.signal_engine import generate_signal, generate_signals
-from jp_stock_analysis.config import DEFAULT_DISCLAIMER, AnalysisConfig
+from jp_stock_analysis.config import DEFAULT_DISCLAIMER, AnalysisConfig, SignalThresholds
 from jp_stock_analysis.schemas import RiskFlag, SectorRelativeMetrics, StockAnalysisResult
+
+
+def _sector_factors(signal) -> list[str]:
+    return [f for f in signal.supporting_factors if f.startswith("sector_relative_score=")]
 
 
 def _sector_relative(
@@ -212,6 +217,61 @@ def test_sector_factor_requires_peers_score_and_confidence():
         assert not any(
             f.startswith("sector_relative_score=") for f in signal.supporting_factors
         ), relative
+
+
+def test_sector_support_defaults_match_previous_constants():
+    thresholds = AnalysisConfig().thresholds
+    assert thresholds.sector_support_score_threshold == 70.0
+    assert thresholds.sector_support_min_peers == 4
+    assert thresholds.sector_support_min_confidence == 50.0
+
+
+def test_custom_sector_support_thresholds_change_evidence_only():
+    def signal_with(thresholds: SignalThresholds | None = None):
+        config = AnalysisConfig(signal_mode="trade_signal")
+        if thresholds is not None:
+            config = AnalysisConfig(signal_mode="trade_signal", thresholds=thresholds)
+        result = _strong_result()
+        result.sector_relative = _sector_relative(score=80.0, peer_count=5, confidence=80.0)
+        return generate_signal(result, config)
+
+    baseline = signal_with()
+    assert baseline.label == "buy_signal"
+    assert len(_sector_factors(baseline)) == 1
+
+    for custom in (
+        SignalThresholds(sector_support_score_threshold=90.0),  # 80 < 90
+        SignalThresholds(sector_support_min_peers=6),  # 5 < 6
+        SignalThresholds(sector_support_min_confidence=90.0),  # 80 < 90
+    ):
+        tightened = signal_with(custom)
+        assert _sector_factors(tightened) == []
+        assert tightened.label == baseline.label  # eligibility never moves the label
+        assert tightened.thresholds_used == baseline.thresholds_used
+
+    loosened = signal_with(SignalThresholds(sector_support_score_threshold=50.0))
+    assert len(_sector_factors(loosened)) == 1
+    assert "(>= 50," in _sector_factors(loosened)[0]
+    assert loosened.label == baseline.label
+
+
+def test_sector_support_thresholds_not_in_thresholds_used():
+    result = _strong_result()
+    result.sector_relative = _sector_relative()
+    signal = generate_signal(result, TRADE_SIGNAL)
+    assert all("sector" not in key for key in signal.thresholds_used)
+
+
+def test_sector_support_config_validation():
+    with pytest.raises(ValueError):
+        SignalThresholds(sector_support_score_threshold=150.0)
+    with pytest.raises(ValueError):
+        SignalThresholds(sector_support_min_confidence=-1.0)
+    with pytest.raises(ValueError):
+        SignalThresholds(sector_support_min_peers=0)
+    # the other thresholds keep their existing validation
+    with pytest.raises(ValueError):
+        SignalThresholds(buy_signal_threshold=101.0)
 
 
 def test_sector_relative_never_creates_signal_outside_trade_signal_mode():

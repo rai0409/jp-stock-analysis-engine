@@ -71,8 +71,10 @@ untouched and green.
 
 ## Limitations
 
-- Eligibility constants (70 / 4 peers / 50 confidence) are engine constants,
-  not yet `SignalThresholds` config fields.
+- ~~Eligibility constants (70 / 4 peers / 50 confidence) are engine constants,
+  not yet `SignalThresholds` config fields.~~ **Resolved:** now configurable
+  via `SignalThresholds.sector_support_*` with identical defaults — see
+  `docs/v1_sector_signal_threshold_config.md`.
 - Peer groups come from the analyzed universe, so the factor's meaning depends
   on which codes were included in the run.
 - The synthetic universe has no disclosure texts, so signal confidences sit
@@ -81,7 +83,7 @@ untouched and green.
 
 ## Next recommended step
 
-Promote the sector-support eligibility constants into `SignalThresholds`
-(validated config fields with the current values as defaults) so research
-experiments can tune them without code changes — then re-run the 12-code
-universe regression to confirm identical default behavior.
+**Done:** the eligibility constants were promoted into `SignalThresholds`
+(`sector_support_score_threshold` / `sector_support_min_peers` /
+`sector_support_min_confidence`) with identical defaults and validation; see
+`docs/v1_sector_signal_threshold_config.md`.

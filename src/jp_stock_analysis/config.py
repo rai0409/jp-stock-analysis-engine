@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 from jp_stock_analysis.schemas import SignalMode
 
@@ -37,7 +37,13 @@ class ScoreWeights(BaseModel):
 
 
 class SignalThresholds(BaseModel):
-    """0-100 score thresholds used by screening and the trade-signal engine."""
+    """0-100 score thresholds used by screening and the trade-signal engine.
+
+    The ``sector_support_*`` fields gate the sector-relative entry in
+    ``supporting_factors`` only. They are evidence-only and applied after the
+    signal label is decided, so they never influence label selection and are
+    deliberately not reported in ``thresholds_used``.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -49,10 +55,22 @@ class SignalThresholds(BaseModel):
     sell_signal_threshold: float = 35.0
     min_confidence_for_signal: float = 55.0
     max_risk_score_for_buy_signal: float = 45.0
+    sector_support_score_threshold: float = 70.0
+    sector_support_min_peers: int = 4
+    sector_support_min_confidence: float = 50.0
+
+    @field_validator("sector_support_min_peers")
+    @classmethod
+    def _positive_peers(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("sector_support_min_peers must be a positive integer")
+        return value
 
     @field_validator("*")
     @classmethod
-    def _in_range(cls, value: float) -> float:
+    def _in_range(cls, value: float, info: ValidationInfo) -> float:
+        if info.field_name == "sector_support_min_peers":
+            return value  # validated separately as a positive integer
         if not 0 <= value <= 100:
             raise ValueError("thresholds must be between 0 and 100")
         return value

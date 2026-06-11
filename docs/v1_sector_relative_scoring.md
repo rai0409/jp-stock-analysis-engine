@@ -113,15 +113,18 @@ trade-signal behavior are untouched by sector-relative attachment.
   (J-Quants `Sector33CodeName` vs local CSV labels must agree to group).
 - **`sector_relative_score` is still NOT used in `final_score` or screening
   labels.** In `trade_signal` mode it now appears as *supporting evidence
-  only* (score ≥ 70, ≥ 4 peers, confidence ≥ 50): the factor string is
-  appended after the signal label is decided and never counts toward the
-  two-core-factor buy requirement — see
-  `docs/v1_sector_relative_signal_support.md`.
+  only*, gated by `SignalThresholds.sector_support_*` (defaults: score ≥ 70,
+  ≥ 4 peers, confidence ≥ 50): the factor string is appended after the signal
+  label is decided and never counts toward the two-core-factor buy
+  requirement — see `docs/v1_sector_relative_signal_support.md` and
+  `docs/v1_sector_signal_threshold_config.md`.
 - **J-Quants live validation remains deferred** (HTTP 403); all validation
   uses synthetic cache fixtures.
 
 ## Next recommended step
 
-Promote the sector-support eligibility constants (70 / 4 peers / 50
-confidence) into `SignalThresholds` config fields so they can be tuned
-without code changes, keeping today's values as the defaults.
+**Done:** the sector-support eligibility constants are now `SignalThresholds`
+config fields with today's values as defaults
+(`docs/v1_sector_signal_threshold_config.md`). Next functional gap: a real
+disclosure provider (EDINET, cache-first) or resolving the deferred J-Quants
+live validation.
