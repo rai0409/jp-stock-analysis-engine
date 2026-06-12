@@ -38,6 +38,8 @@ TradeSignalLabel = Literal[
 
 RiskSeverity = Literal["low", "medium", "high", "critical"]
 
+ReliabilityGrade = Literal["high", "medium", "low"]
+
 FindingCategory = Literal[
     "positive_factor",
     "negative_factor",
@@ -257,11 +259,30 @@ class SectorRelativeMetrics(ResultBase):
 
 
 class ScreeningResult(SchemaBase):
+    """One ranked screening row.
+
+    ``final_score`` stays the raw weighted score for transparency. The
+    reliability fields exist so a high ``final_score`` computed from very
+    little data is never presented as a strong screening winner:
+
+    - ``data_coverage_score``: 20 points per covered analysis component
+      (fundamentals, valuation, momentum, disclosure, risk).
+    - ``screening_score``: reliability-adjusted ranking score
+      (``final_score`` scaled by confidence and coverage).
+    - ``screening_eligible`` / ``reliability_grade``: deterministic guard
+      computed in ``analysis/reliability.py``; ineligible results are always
+      graded ``low`` and ranked below all eligible results.
+    """
+
     ticker: str
     company_name: str | None = None
     rank: int | None = None
     final_score: float | None = None
     confidence_score: float = 0.0
+    data_coverage_score: float = 0.0
+    screening_score: float | None = None
+    screening_eligible: bool = False
+    reliability_grade: ReliabilityGrade = "low"
     screening_label: ScreeningLabel | None = None
     warnings: list[str] = Field(default_factory=list)
 

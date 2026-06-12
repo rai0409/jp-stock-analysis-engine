@@ -43,6 +43,11 @@ class SignalThresholds(BaseModel):
     ``supporting_factors`` only. They are evidence-only and applied after the
     signal label is decided, so they never influence label selection and are
     deliberately not reported in ``thresholds_used``.
+
+    The ``screening_*`` fields gate screening eligibility (see
+    ``analysis/reliability.py``): results below the minimum confidence or
+    data coverage, or with too few computable sub-scores, keep their
+    ``final_score`` but are marked ineligible and graded ``low``.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -58,19 +63,22 @@ class SignalThresholds(BaseModel):
     sector_support_score_threshold: float = 70.0
     sector_support_min_peers: int = 4
     sector_support_min_confidence: float = 50.0
+    screening_min_confidence: float = 30.0
+    screening_min_coverage: float = 40.0
+    screening_min_subscores: int = 2
 
-    @field_validator("sector_support_min_peers")
+    @field_validator("sector_support_min_peers", "screening_min_subscores")
     @classmethod
-    def _positive_peers(cls, value: int) -> int:
+    def _positive_int(cls, value: int, info: ValidationInfo) -> int:
         if value < 1:
-            raise ValueError("sector_support_min_peers must be a positive integer")
+            raise ValueError(f"{info.field_name} must be a positive integer")
         return value
 
     @field_validator("*")
     @classmethod
     def _in_range(cls, value: float, info: ValidationInfo) -> float:
-        if info.field_name == "sector_support_min_peers":
-            return value  # validated separately as a positive integer
+        if info.field_name in ("sector_support_min_peers", "screening_min_subscores"):
+            return value  # validated separately as positive integers
         if not 0 <= value <= 100:
             raise ValueError("thresholds must be between 0 and 100")
         return value

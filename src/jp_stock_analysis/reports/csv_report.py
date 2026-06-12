@@ -24,6 +24,10 @@ _BASE_COLUMNS = [
     "disclosure_score",
     "risk_score",
     "confidence_score",
+    "data_coverage_score",
+    "screening_score",
+    "screening_eligible",
+    "reliability_grade",
     "warnings_count",
 ]
 
@@ -85,6 +89,10 @@ def write_screening_csv(
                 "disclosure_score": score.disclosure_score if score else None,
                 "risk_score": score.risk_score if score else None,
                 "confidence_score": entry.confidence_score,
+                "data_coverage_score": entry.data_coverage_score,
+                "screening_score": entry.screening_score,
+                "screening_eligible": str(entry.screening_eligible).lower(),
+                "reliability_grade": entry.reliability_grade,
                 "warnings_count": count_warnings(result) if result else 0,
             }
             if include_sector:

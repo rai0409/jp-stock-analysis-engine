@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from jp_stock_analysis.analysis.reliability import ReliabilityAssessment, assess_reliability
 from jp_stock_analysis.config import AnalysisConfig
 from jp_stock_analysis.schemas import StockAnalysisResult
 
@@ -23,7 +24,9 @@ def _coverage_row(name: str, available: bool, note: str) -> str:
     return f"| {name} | {'yes' if available else 'no'} | {note} |"
 
 
-def _executive_summary(result: StockAnalysisResult) -> list[str]:
+def _executive_summary(
+    result: StockAnalysisResult, assessment: ReliabilityAssessment
+) -> list[str]:
     score = result.score
     lines = [
         f"- Ticker: `{result.ticker}`"
@@ -33,7 +36,20 @@ def _executive_summary(result: StockAnalysisResult) -> list[str]:
         f"- Final score: {_fmt(score.final_score if score else None, digits=1)} / 100",
         f"- Confidence: {_fmt(score.confidence_score if score else None, digits=1)} / 100",
         f"- Risk score: {_fmt(score.risk_score if score else None, digits=1)} / 100",
+        f"- Data coverage: {_fmt(assessment.data_coverage_score, digits=1)} / 100",
+        "- Screening score (reliability-adjusted): "
+        + f"{_fmt(assessment.screening_score, digits=1)} / 100",
+        f"- Reliability grade: `{assessment.reliability_grade}`",
+        f"- Screening eligible: {'yes' if assessment.screening_eligible else 'no'}",
     ]
+    if assessment.reliability_grade == "low":
+        final = score.final_score if score else None
+        confidence = score.confidence_score if score else 0.0
+        lines.append(
+            f"- **Low reliability:** final score {_fmt(final, digits=1)} is computed from "
+            f"limited data (coverage {assessment.data_coverage_score:.1f}/100, confidence "
+            f"{confidence:.1f}/100) and must NOT be read as a strong candidate."
+        )
     if result.signal_mode == "screening" and result.screening_label:
         lines.append(f"- Screening label: `{result.screening_label}`")
     if result.signal_mode == "trade_signal" and result.signal:
@@ -245,7 +261,9 @@ def _signal_section(result: StockAnalysisResult) -> list[str]:
     return lines
 
 
-def _evidence_and_warnings(result: StockAnalysisResult) -> list[str]:
+def _evidence_and_warnings(
+    result: StockAnalysisResult, assessment: ReliabilityAssessment
+) -> list[str]:
     lines: list[str] = []
     evidence: list[str] = []
     if result.disclosure:
@@ -273,6 +291,7 @@ def _evidence_and_warnings(result: StockAnalysisResult) -> list[str]:
     ):
         if component is not None:
             warnings.extend(f"{name}: {warning}" for warning in component.warnings)
+    warnings.extend(assessment.warnings)
     if warnings:
         lines.append("Warnings:")
         lines.extend(f"- {warning}" for warning in warnings)
@@ -303,8 +322,9 @@ def _limitations(result: StockAnalysisResult) -> list[str]:
 def render_markdown_report(result: StockAnalysisResult, config: AnalysisConfig) -> str:
     """Render the full per-ticker Markdown report."""
     title = result.ticker + (f" — {result.company_name}" if result.company_name else "")
+    assessment = assess_reliability(result, config.thresholds)
     sections: list[tuple[str, list[str]]] = [
-        ("Executive Summary", _executive_summary(result)),
+        ("Executive Summary", _executive_summary(result, assessment)),
         ("Data Coverage", _data_coverage(result)),
         ("Fundamental Metrics", _fundamentals_section(result)),
         ("Valuation Metrics", _valuation_section(result)),
@@ -322,7 +342,7 @@ def render_markdown_report(result: StockAnalysisResult, config: AnalysisConfig) 
         sections.append(("Research Signal", _signal_section(result)))
     sections.extend(
         [
-            ("Evidence and Warnings", _evidence_and_warnings(result)),
+            ("Evidence and Warnings", _evidence_and_warnings(result, assessment)),
             ("Limitations", _limitations(result)),
             ("Disclaimer", [config.disclaimer]),
         ]
