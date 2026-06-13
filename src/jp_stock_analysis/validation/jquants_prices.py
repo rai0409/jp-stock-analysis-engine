@@ -16,9 +16,17 @@ Safety posture (inherited from the provider):
   prints nothing but row counts and safe diagnostics.
 - **No fabrication.** Prices come straight from the provider's ``PriceBar``
   rows. Tickers with no rows are reported, never invented.
-- **Raw close.** The exported ``close`` is the raw close price
-  (``PriceBar.close``), not adjusted close — see the caveat in
-  ``docs/local_price_csv_input.md``.
+- **Price field is explicit.** ``price_field`` selects which value lands in the
+  output ``close`` column:
+
+  - ``"close"`` (default): the raw close (``PriceBar.close``). Corporate actions
+    (splits, dividends) are NOT accounted for.
+  - ``"adjusted_close"``: the back-adjusted close (``PriceBar.adjusted_close``,
+    from J-Quants V2 ``AdjC``). The output column is still named ``close`` for
+    downstream compatibility, but it holds adjusted values (documented in
+    ``docs/local_price_csv_input.md``). If any returned row lacks an adjusted
+    close, the export FAILS clearly rather than silently falling back — prices
+    are never fabricated.
 
 This module emits no trading signals, no portfolio construction, and no
 position sizing; it only acquires and reshapes price data for research.
@@ -31,10 +39,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from jp_stock_analysis.errors import DataValidationError
 from jp_stock_analysis.schemas import PriceBar
+
+PriceField = Literal["close", "adjusted_close"]
 
 
 class _PriceProvider(Protocol):
@@ -58,6 +68,7 @@ class ExportJQuantsPricesResult:
     to_date: str | None
     total_rows_written: int
     rows_per_ticker: dict[str, int]
+    price_field: PriceField = "close"
     warnings: list[str] = field(default_factory=list)
 
 
@@ -68,25 +79,58 @@ def export_jquants_prices_csv(
     *,
     from_date: date | None = None,
     to_date: date | None = None,
+    price_field: PriceField = "close",
 ) -> ExportJQuantsPricesResult:
-    """Fetch daily closes per ticker and write a sorted ``ticker,date,close`` CSV.
+    """Fetch daily prices per ticker and write a sorted ``ticker,date,close`` CSV.
+
+    ``price_field`` selects which value fills the ``close`` column: ``"close"``
+    (raw close, the default) or ``"adjusted_close"`` (back-adjusted close from
+    J-Quants ``AdjC``). With ``"adjusted_close"``, every returned row must carry
+    an adjusted close or the export raises :class:`DataValidationError` (prices
+    are never fabricated; no silent fallback to raw close).
 
     Raises :class:`DataValidationError` if no rows are returned for any ticker
     (a clear blocked state rather than a silent empty file). Provider errors
     (missing cache, missing credentials, API failures) propagate unchanged and
     already carry safe, secret-free messages.
     """
+    if price_field not in ("close", "adjusted_close"):
+        raise DataValidationError(
+            f"invalid price_field {price_field!r}: expected 'close' or 'adjusted_close'"
+        )
+
     requested = list(dict.fromkeys(t.strip() for t in tickers if t and t.strip()))
     if not requested:
         raise DataValidationError("no tickers requested")
 
     rows: list[tuple[str, str, float]] = []
     rows_per_ticker: dict[str, int] = {ticker: 0 for ticker in requested}
+    missing_adjusted: dict[str, int] = {}
     for ticker in requested:
         bars = provider.get_prices(ticker, from_date=from_date, to_date=to_date)
         for bar in bars:
-            rows.append((ticker, bar.date.isoformat(), bar.close))
+            if price_field == "adjusted_close":
+                value = bar.adjusted_close
+                if value is None:
+                    missing_adjusted[ticker] = missing_adjusted.get(ticker, 0) + 1
+                    continue
+            else:
+                value = bar.close
+            rows.append((ticker, bar.date.isoformat(), value))
         rows_per_ticker[ticker] = len(bars)
+
+    # Fail clearly when adjusted close was requested but is missing for any row.
+    if missing_adjusted:
+        detail = ", ".join(
+            f"{ticker} ({count})" for ticker, count in sorted(missing_adjusted.items())
+        )
+        raise DataValidationError(
+            "adjusted_close requested but missing for row(s): "
+            + detail
+            + ". The J-Quants feed returned no AdjC for these rows. Use "
+            "--price-field close or check the data source; prices are never "
+            "fabricated and no silent fallback is applied."
+        )
 
     empty = sorted(ticker for ticker, count in rows_per_ticker.items() if count == 0)
     if empty:
@@ -103,13 +147,20 @@ def export_jquants_prices_csv(
     with out_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle, lineterminator="\n")
         writer.writerow(["ticker", "date", "close"])
-        for ticker, day, close in rows:
-            writer.writerow([ticker, day, _format_close(close)])
+        for ticker, day, value in rows:
+            writer.writerow([ticker, day, _format_close(value)])
 
-    warnings = [
-        "exported prices use raw close (PriceBar.close), not adjusted close; "
-        "corporate actions are not accounted for",
-    ]
+    if price_field == "adjusted_close":
+        warnings = [
+            "exported prices use adjusted close (PriceBar.adjusted_close, from "
+            "J-Quants AdjC); the CSV column is still named 'close' for downstream "
+            "compatibility but holds back-adjusted values",
+        ]
+    else:
+        warnings = [
+            "exported prices use raw close (PriceBar.close), not adjusted close; "
+            "corporate actions are not accounted for",
+        ]
     return ExportJQuantsPricesResult(
         output_path=str(out_path),
         tickers=requested,
@@ -117,6 +168,7 @@ def export_jquants_prices_csv(
         to_date=to_date.isoformat() if to_date else None,
         total_rows_written=len(rows),
         rows_per_ticker=rows_per_ticker,
+        price_field=price_field,
         warnings=warnings,
     )
 
@@ -127,4 +179,4 @@ def _format_close(value: float) -> str:
     return repr(value)
 
 
-__all__ = ["ExportJQuantsPricesResult", "export_jquants_prices_csv"]
+__all__ = ["ExportJQuantsPricesResult", "PriceField", "export_jquants_prices_csv"]

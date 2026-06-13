@@ -33,8 +33,8 @@ class _FakeProvider:
         return list(self._bars.get(ticker, []))
 
 
-def _bar(ticker, day, close):
-    return PriceBar(ticker=ticker, date=day, close=close)
+def _bar(ticker, day, close, adjusted_close=None):
+    return PriceBar(ticker=ticker, date=day, close=close, adjusted_close=adjusted_close)
 
 
 def _read(path):
@@ -68,6 +68,84 @@ def test_export_sorted_by_ticker_then_date(tmp_path):
         "4107,2026-03-28,5050",
         "4107,2026-03-31,5060",
     ]
+
+
+def test_adjusted_close_written_into_close_column(tmp_path):
+    """--price-field adjusted_close puts AdjC values into the 'close' column."""
+    provider = _FakeProvider(
+        {
+            "4107": [
+                _bar("4107", date(2025, 12, 26), 43050, adjusted_close=4783.3),
+                _bar("4107", date(2025, 12, 29), 4985, adjusted_close=4985.0),
+            ]
+        }
+    )
+    out = tmp_path / "adj.csv"
+    result = export_jquants_prices_csv(
+        provider, ["4107"], out, price_field="adjusted_close"
+    )
+    assert result.price_field == "adjusted_close"
+    # column header is still 'close'; values are the adjusted closes, not raw
+    assert _read(out) == [
+        "ticker,date,close",
+        "4107,2025-12-26,4783.3",
+        "4107,2025-12-29,4985",
+    ]
+    assert any("adjusted close" in w for w in result.warnings)
+
+
+def test_adjusted_close_missing_fails_clearly_no_fallback(tmp_path):
+    """If any row lacks adjusted close, fail clearly — never silently fall back."""
+    provider = _FakeProvider(
+        {
+            "3928": [
+                _bar("3928", date(2026, 3, 18), 1000, adjusted_close=1000.0),
+                _bar("3928", date(2026, 3, 19), 1010, adjusted_close=None),
+            ]
+        }
+    )
+    out = tmp_path / "adj.csv"
+    with pytest.raises(DataValidationError, match="adjusted_close requested but missing"):
+        export_jquants_prices_csv(provider, ["3928"], out, price_field="adjusted_close")
+    assert not out.exists()  # no partial file
+
+
+def test_default_price_field_is_raw_close(tmp_path):
+    provider = _FakeProvider(
+        {"3928": [_bar("3928", date(2026, 3, 19), 1010, adjusted_close=999.0)]}
+    )
+    out = tmp_path / "raw.csv"
+    result = export_jquants_prices_csv(provider, ["3928"], out)  # no price_field
+    assert result.price_field == "close"
+    assert _read(out)[1] == "3928,2026-03-19,1010"  # raw close, not 999
+
+
+def test_invalid_price_field_raises(tmp_path):
+    provider = _FakeProvider({"3928": [_bar("3928", date(2026, 3, 19), 1010)]})
+    with pytest.raises(DataValidationError, match="invalid price_field"):
+        export_jquants_prices_csv(
+            provider, ["3928"], tmp_path / "x.csv", price_field="bogus"
+        )
+
+
+def test_cli_adjusted_close_smoke_from_cache(tmp_path, capsys):
+    """The cache fixture carries AdjustmentClose; --price-field adjusted_close works."""
+    out = tmp_path / "adj.csv"
+    code = main(
+        [
+            "fetch-jquants-prices",
+            "--tickers", "7203",
+            "--out", str(out),
+            "--cache-dir", str(CACHE_DIR),
+            "--price-field", "adjusted_close",
+        ]
+    )
+    assert code == 0
+    assert "(adjusted_close)" in capsys.readouterr().out
+    lines = _read(out)
+    assert lines[0] == "ticker,date,close"
+    # fixture's AdjustmentClose equals close, so first adjusted value is 2000
+    assert lines[1] == "7203,2025-01-06,2000"
 
 
 def test_date_range_passed_through_to_provider(tmp_path):

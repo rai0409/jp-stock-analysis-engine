@@ -225,8 +225,9 @@ def prepare_price_csv(
             writer.writerow([ticker, parsed_date.isoformat(), _format_close(close)])
 
     warnings = [
-        "prepared CSV uses raw close prices (not adjusted close); corporate "
-        "actions are not accounted for",
+        "prepared CSV passes the source 'close' column through unchanged; "
+        "whether it holds raw or adjusted close depends on the input. Raw close "
+        "does not account for corporate actions (splits, dividends)",
     ]
     return PreparePriceCsvResult(
         input_path=str(in_path),

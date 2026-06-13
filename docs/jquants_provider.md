@@ -103,8 +103,12 @@ Response field names are isolated in `_DATASETS` and the `_map_*` helpers of
 `TA`/`TotalAssets` → total assets, `CFO` → operating cash flow. Fiscal year =
 calendar year the reporting period ends in. J-Quants statements have no
 capital-expenditure column, so `capital_expenditure` stays `None` (never
-fabricated). The V2 feed also exposes adjusted OHLC (`AdjC`/`AdjO`/…); the
-price exporter currently writes raw close (`PriceBar.close`).
+fabricated). The V2 feed also exposes adjusted OHLC (`AdjC`/`AdjO`/…), mapped to
+`PriceBar.adjusted_close`. The price exporter (`fetch-jquants-prices`) writes
+raw close by default and adjusted close on request via
+`--price-field adjusted_close` (output column stays named `close`; the export
+fails clearly if any requested row lacks an adjusted close — no silent
+fallback). See `docs/local_price_csv_input.md`.
 
 ## Tests are offline
 

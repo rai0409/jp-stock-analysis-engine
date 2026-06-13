@@ -71,13 +71,36 @@ and prices are never fabricated: a ticker with no rows is a hard error.
 ```bash
 python -m jp_stock_analysis.cli fetch-jquants-prices \
   --tickers 3928,4107,4264 \
-  --from-date 2026-03-28 \
+  --from-date 2024-03-21 \
   --out /tmp/topix1000_forward_prices_raw.csv \
   --allow-network
 ```
 
-The output is already `ticker,date,close` (raw close), so it can feed
-`prepare-price-csv` directly as `--input`.
+The output is already `ticker,date,close`, so it can feed `prepare-price-csv`
+directly as `--input`.
+
+**Raw vs adjusted close.** `--price-field` selects which value fills the `close`
+column:
+
+- `close` (default): raw close. Corporate actions (splits, dividends) are not
+  accounted for and can distort forward returns around such events.
+- `adjusted_close`: back-adjusted close from J-Quants `AdjC`. The column is
+  still named `close` for downstream compatibility but holds adjusted values.
+  The export **fails clearly** if any requested row lacks an adjusted close (no
+  silent fallback; prices are never fabricated).
+
+```bash
+python -m jp_stock_analysis.cli fetch-jquants-prices \
+  --tickers 3928,4107,4264 \
+  --from-date 2024-03-21 \
+  --out /tmp/topix1000_forward_prices_adjusted_raw.csv \
+  --price-field adjusted_close \
+  --allow-network
+```
+
+Use adjusted close when corporate actions matter: in the real 2025-11-28 run,
+raw close turned ticker 4107's split into a spurious −86% (h20), while adjusted
+close gave +38% — see `docs/forward_return_validation_results.md`.
 
 ### 1. Prepare the price CSV
 

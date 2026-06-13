@@ -387,6 +387,14 @@ def build_parser() -> argparse.ArgumentParser:
     fetch.add_argument("--from-date", default=None, help="YYYY-MM-DD price range start (optional)")
     fetch.add_argument("--to-date", default=None, help="YYYY-MM-DD price range end (optional)")
     fetch.add_argument(
+        "--price-field",
+        default="close",
+        choices=["close", "adjusted_close"],
+        help="which value fills the output 'close' column: raw close (default) "
+        "or adjusted_close (J-Quants AdjC; column stays named 'close'). With "
+        "adjusted_close the export fails if any row lacks an adjusted close",
+    )
+    fetch.add_argument(
         "--cache-dir",
         default=".cache/jquants",
         help="J-Quants cache directory (default: .cache/jquants)",
@@ -481,6 +489,7 @@ def _run_fetch_jquants_prices(args: argparse.Namespace) -> int:
             args.out,
             from_date=from_date,
             to_date=to_date,
+            price_field=args.price_field,
         )
     except (ValueError, JPStockAnalysisError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -489,7 +498,7 @@ def _run_fetch_jquants_prices(args: argparse.Namespace) -> int:
     for warning in result.warnings:
         print(f"warning: {warning}", file=sys.stderr)
     print(
-        f"Exported {result.total_rows_written} rows for "
+        f"Exported {result.total_rows_written} rows ({result.price_field}) for "
         f"{len(result.tickers)} ticker(s) -> {result.output_path}"
     )
     return 0
