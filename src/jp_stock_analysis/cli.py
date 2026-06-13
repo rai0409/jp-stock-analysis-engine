@@ -73,6 +73,10 @@ from jp_stock_analysis.validation.forward_returns import (
     write_forward_return_outputs,
 )
 from jp_stock_analysis.validation.jquants_prices import export_jquants_prices_csv
+from jp_stock_analysis.validation.no_lookahead import (
+    load_readiness_report,
+    write_readiness_outputs,
+)
 from jp_stock_analysis.validation.price_prep import _parse_tickers, prepare_price_csv
 
 
@@ -405,6 +409,47 @@ def build_parser() -> argparse.ArgumentParser:
         help="permit a live J-Quants fetch when the cache is missing "
         "(requires JQUANTS_API_KEY); default is cache-only / offline",
     )
+
+    readiness = subparsers.add_parser(
+        "check-forward-readiness",
+        help="check strict no-look-ahead readiness for forward-return validation "
+        "(disclosure-axis): can a decision date on/after the bundle disclosure "
+        "date have enough later price rows per horizon? Offline; research-only",
+    )
+    readiness.add_argument(
+        "--fundamentals",
+        required=True,
+        help="path to the bundle fundamentals CSV (ticker universe)",
+    )
+    readiness.add_argument(
+        "--prices",
+        default=None,
+        help="path to a local prices CSV (ticker,date,close); omit to treat all "
+        "price data as missing",
+    )
+    readiness.add_argument(
+        "--disclosure-index",
+        default=None,
+        help="path to the topix1000 export index.json (reads target_date as the "
+        "bundle disclosure date)",
+    )
+    readiness.add_argument(
+        "--disclosure-date",
+        default=None,
+        help="YYYY-MM-DD bundle disclosure date override (wins over "
+        "--disclosure-index)",
+    )
+    readiness.add_argument(
+        "--output-dir", required=True, help="directory for readiness outputs"
+    )
+    readiness.add_argument(
+        "--horizons",
+        default="5,20,60",
+        help="comma-separated trading-row horizons (default: 5,20,60)",
+    )
+    readiness.add_argument(
+        "--no-markdown", action="store_true", help="skip writing forward_readiness.md"
+    )
     return parser
 
 
@@ -504,6 +549,41 @@ def _run_fetch_jquants_prices(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_check_forward_readiness(args: argparse.Namespace) -> int:
+    try:
+        horizons = _parse_horizons(args.horizons)
+        disclosure_override = (
+            date.fromisoformat(args.disclosure_date) if args.disclosure_date else None
+        )
+        if disclosure_override is None and args.disclosure_index is None:
+            raise ValueError(
+                "provide --disclosure-index or --disclosure-date for the bundle "
+                "disclosure date"
+            )
+        report = load_readiness_report(
+            args.fundamentals,
+            args.prices,
+            horizons,
+            index_json_path=args.disclosure_index,
+            disclosure_date_override=disclosure_override,
+        )
+        paths = write_readiness_outputs(
+            report, args.output_dir, write_markdown=not args.no_markdown
+        )
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    summary = report.to_dict()
+    print(
+        f"Strict no-look-ahead readiness: {report.overall_status.upper()} "
+        f"({summary['eligible_ticker_count']}/{summary['ticker_count']} tickers "
+        f"eligible). Disclosure date: {summary['bundle_disclosure_date']}. "
+        f"Written to: {paths['json_path'].parent}"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -513,6 +593,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_prepare_price_csv(args)
     if args.command == "fetch-jquants-prices":
         return _run_fetch_jquants_prices(args)
+    if args.command == "check-forward-readiness":
+        return _run_check_forward_readiness(args)
     if args.command != "analyze":
         return 2
     if args.provider == "local" and not args.prices:

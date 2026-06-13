@@ -1,11 +1,24 @@
 # Forward-return validation results
 
-**Status: real prices acquired and a real forward-return run completed on
-adjusted close within the data-coverage window. The 4107 raw-close split
-artifact is removed. Still NO predictive conclusion (n=3, no statistical
-significance; `screening_score` and `final_score` rank identically here).**
+**Status: the n=3 adjusted-close run is a PIPELINE PROOF ONLY. Strict broad
+no-look-ahead validation on the 2026-03-27 bundle is BLOCKED — the bundle
+disclosure date (2026-03-27) is after the available adjusted-close price
+coverage (ends 2026-03-19). No valid post-disclosure 5/20/60 forward window
+exists, so no predictive conclusion can be drawn.**
 
-Updated 2026-06-13 (adjusted-close run added).
+Updated 2026-06-14 (no-look-ahead readiness check + broad-validation blocker).
+
+## TL;DR
+
+- **Pipeline works end-to-end** (topix1000 bundle → analyze → screening.json →
+  validate-forward-returns) and adjusted close removed the 4107 split artifact.
+- **The n=3 run is not a clean study.** Its decision date (2025-11-28) precedes
+  the bundle disclosure date (2026-03-27), so it is *look-ahead with respect to
+  disclosure availability* — see "Disclosure-axis vs price-axis" below.
+- **Strict broad validation is BLOCKED** by data coverage, proven
+  deterministically by `check-forward-readiness` (see the BLOCKED section).
+- Research-only. No trading signals, no portfolio construction, no position
+  sizing, not financial advice.
 
 ## J-Quants V2 endpoint resolution (fixed)
 
@@ -78,15 +91,23 @@ HTTP 400 :: "Your subscription covers the following dates: 2024-03-21 ~ 2026-03-
 the coverage check (0 rows on/after 2026-03-28 for every ticker). **No real
 prices exist on/after 2026-03-28 on this plan**; none were fabricated.
 
-## Real run performed within the covered window (deviation, clearly labelled)
+## n=3 run within the covered window — PIPELINE PROOF ONLY (look-ahead w.r.t. disclosure)
+
+> **This run is not a valid no-look-ahead study.** It demonstrates the pipeline
+> end-to-end on real prices and shows adjusted close fixes the 4107 artifact —
+> nothing more. Its decision date (2025-11-28) is ~4 months *before* the bundle
+> disclosure date (2026-03-27), so the screening scores at 2025-11-28 use annual
+> fundamentals that were not public until 2026-03-27. See "Disclosure-axis vs
+> price-axis no-look-ahead" and the BLOCKED section below.
 
 To produce a genuine forward-return run with real prices, the decision/analysis
 date was moved inside the covered window: **2025-11-28** (the latest covered
 date that still leaves ≥60 forward trading rows, through 2026-03-19). The
 `analyze` step was fed real closes up to 2025-11-28 (so `analysis_date =
 2025-11-28`); `validate-forward-returns` was fed the full real series so it
-could look forward. No-look-ahead is enforced (base = first row strictly after
-2025-11-28 = 2025-12-01).
+could look forward. Price-axis no-look-ahead is enforced (base = first row
+strictly after 2025-11-28 = 2025-12-01) — but disclosure-axis no-look-ahead is
+**not** satisfied (see below).
 
 ### Adjusted-close run (primary)
 
@@ -121,6 +142,77 @@ split; raw close collapses 43050 → 4985 on 2025-12-29):
 3928 and 4264 are byte-identical between the raw and adjusted runs (no corporate
 action), confirming the change is isolated to the adjusted ticker.
 
+## Disclosure-axis vs price-axis no-look-ahead
+
+A forward-return study must avoid look-ahead on **two** axes:
+
+- **Price axis** — a forward return must not use a price on or before the
+  decision date. The harness enforces this (base = first row *strictly after*
+  the decision date). **Implemented and verified.**
+- **Disclosure axis** — the screening scores used to *make* the decision must
+  only use information public on or before the decision date. The topix1000
+  annual fundamentals/disclosures became public on the bundle disclosure date
+  **2026-03-27** (`index.json` `target_date`; raw EDINET path `…/2026/03/27/…`).
+
+The n=3 run above decided as of **2025-11-28** using those 2026-03-27
+fundamentals, so it satisfies the price axis but **violates the disclosure
+axis**. That is acceptable for a pipeline smoke, but it is *not* a valid
+predictive test and must never be read as one.
+
+## Strict broad no-look-ahead validation: BLOCKED
+
+A strict study on this bundle requires the decision date to be **on or after
+2026-03-27**, then needs enough later price rows to measure each horizon (the
+harness needs `N + 1` rows strictly after the decision date: base + `N`).
+
+The `check-forward-readiness` command checks this deterministically:
+
+```bash
+python -m jp_stock_analysis.cli check-forward-readiness \
+  --fundamentals /tmp/topix1000_engine_bundle/fundamentals.csv \
+  --prices /tmp/topix1000_forward_prices_adjusted.csv \
+  --disclosure-index /tmp/topix1000_annual_report_export_linked/index.json \
+  --output-dir /tmp/jstocks_forward_readiness_topix1000 \
+  --horizons 5,20,60
+```
+
+Verified result (2026-06-14): **BLOCKED — 0 / 75 tickers eligible**, disclosure
+date 2026-03-27.
+
+| tickers | price coverage | forward rows after 2026-03-27 | reason |
+| ------- | -------------- | ----------------------------- | ------ |
+| 3928, 4107, 4264 | 488 rows each, ends **2026-03-19** | **0** | `price_coverage_ends_before_disclosure_date` |
+| other 72 bundle tickers | no local price CSV | n/a | `missing_price_data` |
+
+Blocked (ticker×horizon) reason counts: `price_coverage_ends_before_disclosure_date`: 9
+(3 priced tickers × 3 horizons), `missing_price_data`: 216 (72 × 3).
+
+### Exact blocker
+
+The bundle disclosure date **2026-03-27** is *after* the available adjusted
+close price coverage end **2026-03-19** (the J-Quants plan window ends
+~2026-03-21). There are **zero** price rows on or after the disclosure date, so
+no valid post-disclosure 5/20/60-day forward window exists for any ticker. No
+prices were fabricated.
+
+### Exact unblock condition
+
+Either of:
+
+1. **Adjusted-close prices extending ≥ 60 trading days after the disclosure
+   date** — i.e. coverage through roughly **late June 2026** for a 2026-03-27
+   disclosure (needs a J-Quants plan/window reaching past 2026-03-21, plus a
+   fetch of all 63 usable consolidated tickers).
+2. **Older historical fundamentals/disclosures with matching historical
+   availability (filing) dates** — e.g. a prior-year annual batch whose
+   disclosure date is far enough before the existing price coverage that a full
+   60-trading-day forward window already exists. This requires per-document
+   historical disclosure dates (the current export carries only a single bundle
+   `target_date`).
+
+Until one of these holds, broad strict validation cannot run, and the n=3 run
+must stay labelled as a pipeline proof only.
+
 ## Interpretation
 
 **Still no predictive conclusion can be drawn**, but for a cleaner reason than
@@ -154,11 +246,13 @@ decision dates.
   coverage), not 2026-03-28; results are not the originally requested window.
 - **Small sample, no statistical significance.** Only 3 tickers have real
   fundamentals, all graded `medium`; any ordering is descriptive only.
-- **No-look-ahead** is enforced (base = first row strictly after the analysis
-  date).
+- **Price-axis no-look-ahead** is enforced (base = first row strictly after the
+  analysis date). **Disclosure-axis no-look-ahead is NOT satisfied** by the n=3
+  run (decision 2025-11-28 < disclosure 2026-03-27); a strict broad run is
+  BLOCKED (see above).
 - **No financial advice, no trading automation.** Self-directed research only:
   no buy/sell/hold signals, no portfolio construction, no position sizing.
 
 **Do not tag** a release as a validated predictive result: the adjusted run is
-real and the artifact is fixed, but n=3 with identical score rankings is not
-strong enough to conclude anything predictive.
+real and the artifact is fixed, but it is a pipeline proof only (look-ahead
+w.r.t. disclosure), and strict broad validation is BLOCKED by price coverage.
