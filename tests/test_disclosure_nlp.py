@@ -79,6 +79,37 @@ def test_unmatched_text_warns_low_confidence():
     assert result.warnings
 
 
+def test_rule_based_analyzer_propagates_document_metadata():
+    document = DisclosureDocument(
+        ticker="7203", text=_SAMPLE_TEXT, document_type="tanshin", fiscal_year=2024
+    )
+    result = RuleBasedDisclosureAnalyzer().analyze(document)
+    assert result.document_type == "tanshin"
+    assert result.fiscal_year == 2024
+
+    # the empty-text early return must preserve provenance too
+    empty = RuleBasedDisclosureAnalyzer().analyze(
+        DisclosureDocument(ticker="7203", text="", document_type="tanshin", fiscal_year=2024)
+    )
+    assert empty.document_type == "tanshin"
+    assert empty.fiscal_year == 2024
+
+
+def test_noop_llm_analyzer_propagates_document_metadata():
+    document = DisclosureDocument(
+        ticker="7203", text=_SAMPLE_TEXT, document_type="yuho", fiscal_year=2023
+    )
+    result = NoOpLLMDisclosureAnalyzer().analyze(document)
+    assert result.document_type == "yuho"
+    assert result.fiscal_year == 2023
+
+
+def test_metadata_defaults_to_none_when_absent():
+    result = _analyze(_SAMPLE_TEXT)
+    assert result.document_type is None
+    assert result.fiscal_year is None
+
+
 def test_noop_llm_analyzer_returns_no_findings():
     result = NoOpLLMDisclosureAnalyzer().analyze(
         DisclosureDocument(ticker="7203", text=_SAMPLE_TEXT)

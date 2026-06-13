@@ -1,0 +1,802 @@
+[
+ {
+  "Date": "2025-01-06",
+  "Code": "65030",
+  "Open": 2089.5,
+  "High": 2121.0,
+  "Low": 2079.0,
+  "Close": 2100.0,
+  "AdjustmentClose": 2100.0,
+  "Volume": 1000000
+ },
+ {
+  "Date": "2025-01-07",
+  "Code": "65030",
+  "Open": 2092.2,
+  "High": 2123.74,
+  "Low": 2081.68,
+  "Close": 2102.71,
+  "AdjustmentClose": 2102.71,
+  "Volume": 997000
+ },
+ {
+  "Date": "2025-01-08",
+  "Code": "65030",
+  "Open": 2094.75,
+  "High": 2126.33,
+  "Low": 2084.23,
+  "Close": 2105.28,
+  "AdjustmentClose": 2105.28,
+  "Volume": 994000
+ },
+ {
+  "Date": "2025-01-09",
+  "Code": "65030",
+  "Open": 2097.06,
+  "High": 2128.68,
+  "Low": 2086.52,
+  "Close": 2107.6,
+  "AdjustmentClose": 2107.6,
+  "Volume": 991000
+ },
+ {
+  "Date": "2025-01-10",
+  "Code": "65030",
+  "Open": 2098.98,
+  "High": 2130.63,
+  "Low": 2088.43,
+  "Close": 2109.53,
+  "AdjustmentClose": 2109.53,
+  "Volume": 988000
+ },
+ {
+  "Date": "2025-01-13",
+  "Code": "65030",
+  "Open": 2100.44,
+  "High": 2132.1,
+  "Low": 2089.88,
+  "Close": 2110.99,
+  "AdjustmentClose": 2110.99,
+  "Volume": 985000
+ },
+ {
+  "Date": "2025-01-14",
+  "Code": "65030",
+  "Open": 2101.32,
+  "High": 2133.0,
+  "Low": 2090.76,
+  "Close": 2111.88,
+  "AdjustmentClose": 2111.88,
+  "Volume": 982000
+ },
+ {
+  "Date": "2025-01-15",
+  "Code": "65030",
+  "Open": 2101.59,
+  "High": 2133.27,
+  "Low": 2091.03,
+  "Close": 2112.15,
+  "AdjustmentClose": 2112.15,
+  "Volume": 979000
+ },
+ {
+  "Date": "2025-01-16",
+  "Code": "65030",
+  "Open": 2101.2,
+  "High": 2132.88,
+  "Low": 2090.64,
+  "Close": 2111.76,
+  "AdjustmentClose": 2111.76,
+  "Volume": 976000
+ },
+ {
+  "Date": "2025-01-17",
+  "Code": "65030",
+  "Open": 2100.15,
+  "High": 2131.81,
+  "Low": 2089.59,
+  "Close": 2110.7,
+  "AdjustmentClose": 2110.7,
+  "Volume": 973000
+ },
+ {
+  "Date": "2025-01-20",
+  "Code": "65030",
+  "Open": 2098.44,
+  "High": 2130.07,
+  "Low": 2087.89,
+  "Close": 2108.98,
+  "AdjustmentClose": 2108.98,
+  "Volume": 970000
+ },
+ {
+  "Date": "2025-01-21",
+  "Code": "65030",
+  "Open": 2096.13,
+  "High": 2127.73,
+  "Low": 2085.59,
+  "Close": 2106.66,
+  "AdjustmentClose": 2106.66,
+  "Volume": 967000
+ },
+ {
+  "Date": "2025-01-22",
+  "Code": "65030",
+  "Open": 2093.28,
+  "High": 2124.84,
+  "Low": 2082.76,
+  "Close": 2103.8,
+  "AdjustmentClose": 2103.8,
+  "Volume": 964000
+ },
+ {
+  "Date": "2025-01-23",
+  "Code": "65030",
+  "Open": 2089.99,
+  "High": 2121.49,
+  "Low": 2079.49,
+  "Close": 2100.49,
+  "AdjustmentClose": 2100.49,
+  "Volume": 961000
+ },
+ {
+  "Date": "2025-01-24",
+  "Code": "65030",
+  "Open": 2086.34,
+  "High": 2117.79,
+  "Low": 2075.85,
+  "Close": 2096.82,
+  "AdjustmentClose": 2096.82,
+  "Volume": 958000
+ },
+ {
+  "Date": "2025-01-27",
+  "Code": "65030",
+  "Open": 2082.48,
+  "High": 2113.87,
+  "Low": 2072.01,
+  "Close": 2092.94,
+  "AdjustmentClose": 2092.94,
+  "Volume": 955000
+ },
+ {
+  "Date": "2025-01-28",
+  "Code": "65030",
+  "Open": 2078.52,
+  "High": 2109.85,
+  "Low": 2068.07,
+  "Close": 2088.96,
+  "AdjustmentClose": 2088.96,
+  "Volume": 952000
+ },
+ {
+  "Date": "2025-01-29",
+  "Code": "65030",
+  "Open": 2074.59,
+  "High": 2105.87,
+  "Low": 2064.17,
+  "Close": 2085.02,
+  "AdjustmentClose": 2085.02,
+  "Volume": 949000
+ },
+ {
+  "Date": "2025-01-30",
+  "Code": "65030",
+  "Open": 2070.84,
+  "High": 2102.06,
+  "Low": 2060.44,
+  "Close": 2081.25,
+  "AdjustmentClose": 2081.25,
+  "Volume": 946000
+ },
+ {
+  "Date": "2025-01-31",
+  "Code": "65030",
+  "Open": 2067.39,
+  "High": 2098.56,
+  "Low": 2057.0,
+  "Close": 2077.78,
+  "AdjustmentClose": 2077.78,
+  "Volume": 943000
+ },
+ {
+  "Date": "2025-02-03",
+  "Code": "65030",
+  "Open": 2064.35,
+  "High": 2095.47,
+  "Low": 2053.97,
+  "Close": 2074.72,
+  "AdjustmentClose": 2074.72,
+  "Volume": 940000
+ },
+ {
+  "Date": "2025-02-04",
+  "Code": "65030",
+  "Open": 2061.81,
+  "High": 2092.89,
+  "Low": 2051.45,
+  "Close": 2072.17,
+  "AdjustmentClose": 2072.17,
+  "Volume": 937000
+ },
+ {
+  "Date": "2025-02-05",
+  "Code": "65030",
+  "Open": 2059.85,
+  "High": 2090.9,
+  "Low": 2049.5,
+  "Close": 2070.2,
+  "AdjustmentClose": 2070.2,
+  "Volume": 934000
+ },
+ {
+  "Date": "2025-02-06",
+  "Code": "65030",
+  "Open": 2058.52,
+  "High": 2089.55,
+  "Low": 2048.17,
+  "Close": 2068.86,
+  "AdjustmentClose": 2068.86,
+  "Volume": 931000
+ },
+ {
+  "Date": "2025-02-07",
+  "Code": "65030",
+  "Open": 2057.86,
+  "High": 2088.88,
+  "Low": 2047.52,
+  "Close": 2068.2,
+  "AdjustmentClose": 2068.2,
+  "Volume": 928000
+ },
+ {
+  "Date": "2025-02-10",
+  "Code": "65030",
+  "Open": 2057.86,
+  "High": 2088.88,
+  "Low": 2047.52,
+  "Close": 2068.2,
+  "AdjustmentClose": 2068.2,
+  "Volume": 925000
+ },
+ {
+  "Date": "2025-02-11",
+  "Code": "65030",
+  "Open": 2058.5,
+  "High": 2089.53,
+  "Low": 2048.15,
+  "Close": 2068.84,
+  "AdjustmentClose": 2068.84,
+  "Volume": 922000
+ },
+ {
+  "Date": "2025-02-12",
+  "Code": "65030",
+  "Open": 2059.72,
+  "High": 2090.77,
+  "Low": 2049.37,
+  "Close": 2070.07,
+  "AdjustmentClose": 2070.07,
+  "Volume": 919000
+ },
+ {
+  "Date": "2025-02-13",
+  "Code": "65030",
+  "Open": 2061.47,
+  "High": 2092.55,
+  "Low": 2051.11,
+  "Close": 2071.83,
+  "AdjustmentClose": 2071.83,
+  "Volume": 916000
+ },
+ {
+  "Date": "2025-02-14",
+  "Code": "65030",
+  "Open": 2063.63,
+  "High": 2094.74,
+  "Low": 2053.26,
+  "Close": 2074.0,
+  "AdjustmentClose": 2074.0,
+  "Volume": 913000
+ },
+ {
+  "Date": "2025-02-17",
+  "Code": "65030",
+  "Open": 2066.11,
+  "High": 2097.25,
+  "Low": 2055.73,
+  "Close": 2076.49,
+  "AdjustmentClose": 2076.49,
+  "Volume": 910000
+ },
+ {
+  "Date": "2025-02-18",
+  "Code": "65030",
+  "Open": 2068.76,
+  "High": 2099.95,
+  "Low": 2058.37,
+  "Close": 2079.16,
+  "AdjustmentClose": 2079.16,
+  "Volume": 907000
+ },
+ {
+  "Date": "2025-02-19",
+  "Code": "65030",
+  "Open": 2071.48,
+  "High": 2102.71,
+  "Low": 2061.07,
+  "Close": 2081.89,
+  "AdjustmentClose": 2081.89,
+  "Volume": 904000
+ },
+ {
+  "Date": "2025-02-20",
+  "Code": "65030",
+  "Open": 2074.12,
+  "High": 2105.39,
+  "Low": 2063.69,
+  "Close": 2084.54,
+  "AdjustmentClose": 2084.54,
+  "Volume": 901000
+ },
+ {
+  "Date": "2025-02-21",
+  "Code": "65030",
+  "Open": 2076.56,
+  "High": 2107.86,
+  "Low": 2066.12,
+  "Close": 2086.99,
+  "AdjustmentClose": 2086.99,
+  "Volume": 898000
+ },
+ {
+  "Date": "2025-02-24",
+  "Code": "65030",
+  "Open": 2078.65,
+  "High": 2109.99,
+  "Low": 2068.21,
+  "Close": 2089.1,
+  "AdjustmentClose": 2089.1,
+  "Volume": 895000
+ },
+ {
+  "Date": "2025-02-25",
+  "Code": "65030",
+  "Open": 2080.32,
+  "High": 2111.68,
+  "Low": 2069.86,
+  "Close": 2090.77,
+  "AdjustmentClose": 2090.77,
+  "Volume": 892000
+ },
+ {
+  "Date": "2025-02-26",
+  "Code": "65030",
+  "Open": 2081.45,
+  "High": 2112.83,
+  "Low": 2070.99,
+  "Close": 2091.91,
+  "AdjustmentClose": 2091.91,
+  "Volume": 889000
+ },
+ {
+  "Date": "2025-02-27",
+  "Code": "65030",
+  "Open": 2081.99,
+  "High": 2113.37,
+  "Low": 2071.53,
+  "Close": 2092.45,
+  "AdjustmentClose": 2092.45,
+  "Volume": 886000
+ },
+ {
+  "Date": "2025-02-28",
+  "Code": "65030",
+  "Open": 2081.89,
+  "High": 2113.27,
+  "Low": 2071.43,
+  "Close": 2092.35,
+  "AdjustmentClose": 2092.35,
+  "Volume": 883000
+ },
+ {
+  "Date": "2025-03-03",
+  "Code": "65030",
+  "Open": 2081.11,
+  "High": 2112.49,
+  "Low": 2070.65,
+  "Close": 2091.57,
+  "AdjustmentClose": 2091.57,
+  "Volume": 880000
+ },
+ {
+  "Date": "2025-03-04",
+  "Code": "65030",
+  "Open": 2079.68,
+  "High": 2111.03,
+  "Low": 2069.23,
+  "Close": 2090.13,
+  "AdjustmentClose": 2090.13,
+  "Volume": 877000
+ },
+ {
+  "Date": "2025-03-05",
+  "Code": "65030",
+  "Open": 2077.62,
+  "High": 2108.94,
+  "Low": 2067.18,
+  "Close": 2088.06,
+  "AdjustmentClose": 2088.06,
+  "Volume": 874000
+ },
+ {
+  "Date": "2025-03-06",
+  "Code": "65030",
+  "Open": 2074.99,
+  "High": 2106.27,
+  "Low": 2064.57,
+  "Close": 2085.42,
+  "AdjustmentClose": 2085.42,
+  "Volume": 871000
+ },
+ {
+  "Date": "2025-03-07",
+  "Code": "65030",
+  "Open": 2071.87,
+  "High": 2103.1,
+  "Low": 2061.46,
+  "Close": 2082.28,
+  "AdjustmentClose": 2082.28,
+  "Volume": 868000
+ },
+ {
+  "Date": "2025-03-10",
+  "Code": "65030",
+  "Open": 2068.37,
+  "High": 2099.55,
+  "Low": 2057.97,
+  "Close": 2078.76,
+  "AdjustmentClose": 2078.76,
+  "Volume": 865000
+ },
+ {
+  "Date": "2025-03-11",
+  "Code": "65030",
+  "Open": 2064.59,
+  "High": 2095.71,
+  "Low": 2054.21,
+  "Close": 2074.96,
+  "AdjustmentClose": 2074.96,
+  "Volume": 862000
+ },
+ {
+  "Date": "2025-03-12",
+  "Code": "65030",
+  "Open": 2060.65,
+  "High": 2091.72,
+  "Low": 2050.3,
+  "Close": 2071.01,
+  "AdjustmentClose": 2071.01,
+  "Volume": 859000
+ },
+ {
+  "Date": "2025-03-13",
+  "Code": "65030",
+  "Open": 2056.7,
+  "High": 2087.71,
+  "Low": 2046.37,
+  "Close": 2067.04,
+  "AdjustmentClose": 2067.04,
+  "Volume": 856000
+ },
+ {
+  "Date": "2025-03-14",
+  "Code": "65030",
+  "Open": 2052.87,
+  "High": 2083.82,
+  "Low": 2042.56,
+  "Close": 2063.19,
+  "AdjustmentClose": 2063.19,
+  "Volume": 853000
+ },
+ {
+  "Date": "2025-03-17",
+  "Code": "65030",
+  "Open": 2049.29,
+  "High": 2080.19,
+  "Low": 2038.99,
+  "Close": 2059.59,
+  "AdjustmentClose": 2059.59,
+  "Volume": 850000
+ },
+ {
+  "Date": "2025-03-18",
+  "Code": "65030",
+  "Open": 2046.07,
+  "High": 2076.91,
+  "Low": 2035.79,
+  "Close": 2056.35,
+  "AdjustmentClose": 2056.35,
+  "Volume": 847000
+ },
+ {
+  "Date": "2025-03-19",
+  "Code": "65030",
+  "Open": 2043.31,
+  "High": 2074.12,
+  "Low": 2033.04,
+  "Close": 2053.58,
+  "AdjustmentClose": 2053.58,
+  "Volume": 844000
+ },
+ {
+  "Date": "2025-03-20",
+  "Code": "65030",
+  "Open": 2041.11,
+  "High": 2071.88,
+  "Low": 2030.86,
+  "Close": 2051.37,
+  "AdjustmentClose": 2051.37,
+  "Volume": 841000
+ },
+ {
+  "Date": "2025-03-21",
+  "Code": "65030",
+  "Open": 2039.52,
+  "High": 2070.27,
+  "Low": 2029.27,
+  "Close": 2049.77,
+  "AdjustmentClose": 2049.77,
+  "Volume": 838000
+ },
+ {
+  "Date": "2025-03-24",
+  "Code": "65030",
+  "Open": 2038.59,
+  "High": 2069.32,
+  "Low": 2028.34,
+  "Close": 2048.83,
+  "AdjustmentClose": 2048.83,
+  "Volume": 835000
+ },
+ {
+  "Date": "2025-03-25",
+  "Code": "65030",
+  "Open": 2038.32,
+  "High": 2069.05,
+  "Low": 2028.07,
+  "Close": 2048.56,
+  "AdjustmentClose": 2048.56,
+  "Volume": 832000
+ },
+ {
+  "Date": "2025-03-26",
+  "Code": "65030",
+  "Open": 2038.71,
+  "High": 2069.44,
+  "Low": 2028.46,
+  "Close": 2048.95,
+  "AdjustmentClose": 2048.95,
+  "Volume": 829000
+ },
+ {
+  "Date": "2025-03-27",
+  "Code": "65030",
+  "Open": 2039.7,
+  "High": 2070.45,
+  "Low": 2029.45,
+  "Close": 2049.95,
+  "AdjustmentClose": 2049.95,
+  "Volume": 826000
+ },
+ {
+  "Date": "2025-03-28",
+  "Code": "65030",
+  "Open": 2041.24,
+  "High": 2072.01,
+  "Low": 2030.98,
+  "Close": 2051.5,
+  "AdjustmentClose": 2051.5,
+  "Volume": 823000
+ },
+ {
+  "Date": "2025-03-31",
+  "Code": "65030",
+  "Open": 2043.25,
+  "High": 2074.06,
+  "Low": 2032.98,
+  "Close": 2053.52,
+  "AdjustmentClose": 2053.52,
+  "Volume": 820000
+ },
+ {
+  "Date": "2025-04-01",
+  "Code": "65030",
+  "Open": 2045.62,
+  "High": 2076.46,
+  "Low": 2035.34,
+  "Close": 2055.9,
+  "AdjustmentClose": 2055.9,
+  "Volume": 817000
+ },
+ {
+  "Date": "2025-04-02",
+  "Code": "65030",
+  "Open": 2048.22,
+  "High": 2079.1,
+  "Low": 2037.92,
+  "Close": 2058.51,
+  "AdjustmentClose": 2058.51,
+  "Volume": 814000
+ },
+ {
+  "Date": "2025-04-03",
+  "Code": "65030",
+  "Open": 2050.93,
+  "High": 2081.85,
+  "Low": 2040.63,
+  "Close": 2061.24,
+  "AdjustmentClose": 2061.24,
+  "Volume": 811000
+ },
+ {
+  "Date": "2025-04-04",
+  "Code": "65030",
+  "Open": 2053.63,
+  "High": 2084.59,
+  "Low": 2043.31,
+  "Close": 2063.95,
+  "AdjustmentClose": 2063.95,
+  "Volume": 808000
+ },
+ {
+  "Date": "2025-04-07",
+  "Code": "65030",
+  "Open": 2056.17,
+  "High": 2087.16,
+  "Low": 2045.84,
+  "Close": 2066.5,
+  "AdjustmentClose": 2066.5,
+  "Volume": 805000
+ },
+ {
+  "Date": "2025-04-08",
+  "Code": "65030",
+  "Open": 2058.43,
+  "High": 2089.46,
+  "Low": 2048.08,
+  "Close": 2068.77,
+  "AdjustmentClose": 2068.77,
+  "Volume": 802000
+ },
+ {
+  "Date": "2025-04-09",
+  "Code": "65030",
+  "Open": 2060.29,
+  "High": 2091.35,
+  "Low": 2049.93,
+  "Close": 2070.64,
+  "AdjustmentClose": 2070.64,
+  "Volume": 799000
+ },
+ {
+  "Date": "2025-04-10",
+  "Code": "65030",
+  "Open": 2061.66,
+  "High": 2092.74,
+  "Low": 2051.3,
+  "Close": 2072.02,
+  "AdjustmentClose": 2072.02,
+  "Volume": 796000
+ },
+ {
+  "Date": "2025-04-11",
+  "Code": "65030",
+  "Open": 2062.46,
+  "High": 2093.55,
+  "Low": 2052.09,
+  "Close": 2072.82,
+  "AdjustmentClose": 2072.82,
+  "Volume": 793000
+ },
+ {
+  "Date": "2025-04-14",
+  "Code": "65030",
+  "Open": 2062.63,
+  "High": 2093.73,
+  "Low": 2052.27,
+  "Close": 2073.0,
+  "AdjustmentClose": 2073.0,
+  "Volume": 790000
+ },
+ {
+  "Date": "2025-04-15",
+  "Code": "65030",
+  "Open": 2062.14,
+  "High": 2093.22,
+  "Low": 2051.78,
+  "Close": 2072.5,
+  "AdjustmentClose": 2072.5,
+  "Volume": 787000
+ },
+ {
+  "Date": "2025-04-16",
+  "Code": "65030",
+  "Open": 2060.98,
+  "High": 2092.05,
+  "Low": 2050.63,
+  "Close": 2071.34,
+  "AdjustmentClose": 2071.34,
+  "Volume": 784000
+ },
+ {
+  "Date": "2025-04-17",
+  "Code": "65030",
+  "Open": 2059.19,
+  "High": 2090.24,
+  "Low": 2048.84,
+  "Close": 2069.54,
+  "AdjustmentClose": 2069.54,
+  "Volume": 781000
+ },
+ {
+  "Date": "2025-04-18",
+  "Code": "65030",
+  "Open": 2056.79,
+  "High": 2087.8,
+  "Low": 2046.46,
+  "Close": 2067.13,
+  "AdjustmentClose": 2067.13,
+  "Volume": 778000
+ },
+ {
+  "Date": "2025-04-21",
+  "Code": "65030",
+  "Open": 2053.88,
+  "High": 2084.84,
+  "Low": 2043.56,
+  "Close": 2064.2,
+  "AdjustmentClose": 2064.2,
+  "Volume": 775000
+ },
+ {
+  "Date": "2025-04-22",
+  "Code": "65030",
+  "Open": 2050.53,
+  "High": 2081.44,
+  "Low": 2040.22,
+  "Close": 2060.83,
+  "AdjustmentClose": 2060.83,
+  "Volume": 772000
+ },
+ {
+  "Date": "2025-04-23",
+  "Code": "65030",
+  "Open": 2046.84,
+  "High": 2077.7,
+  "Low": 2036.56,
+  "Close": 2057.13,
+  "AdjustmentClose": 2057.13,
+  "Volume": 769000
+ },
+ {
+  "Date": "2025-04-24",
+  "Code": "65030",
+  "Open": 2042.96,
+  "High": 2073.76,
+  "Low": 2032.7,
+  "Close": 2053.23,
+  "AdjustmentClose": 2053.23,
+  "Volume": 766000
+ },
+ {
+  "Date": "2025-04-25",
+  "Code": "65030",
+  "Open": 2039.01,
+  "High": 2069.75,
+  "Low": 2028.77,
+  "Close": 2049.26,
+  "AdjustmentClose": 2049.26,
+  "Volume": 763000
+ }
+]

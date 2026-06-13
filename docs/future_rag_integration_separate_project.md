@@ -12,21 +12,28 @@ separate project. Recommended name: **`jp_stock_rag_service`**.
 That separate project may consume the exports of this engine as plain files.
 Nothing in this repository should ever import from or depend on it.
 
-## Required export fields for future ingestion
+## Required export fields — confirmed stable paths
 
-The JSON report already carries (or has schema room for) the fields a RAG
-ingestion layer needs:
+All fields a RAG ingestion layer needs are now available at stable paths in
+`screening.json` (guarded by `tests/test_cli.py::test_rag_export_stable_paths_in_json`):
 
-- `ticker`
-- `company_name`
-- `fiscal_year`
-- `document_type`
-- `evidence_text` (per disclosure finding)
-- `analysis_summary` (markdown executive summary / score reasons)
-- `risks` (risk flags with severity, explanation, evidence)
-- `positive_factors` (disclosure findings with `category=positive_factor`)
-- `score_breakdown` (all sub-scores, reasons, confidence)
-- `signal` (only when `trade_signal` mode was explicitly enabled)
+| Field | Stable JSON path |
+|---|---|
+| `ticker` | `results[].ticker` |
+| `company_name` | `results[].company_name` |
+| `fiscal_year` | `results[].fundamentals.fiscal_year` and `results[].disclosure.fiscal_year` |
+| `document_type` | `results[].disclosure.document_type` |
+| `evidence_text` | `results[].disclosure.findings[].evidence_text` |
+| `analysis_summary` | `results[].score.reasons` (per-sub-score explanations) and `results[].disclosure.findings[].summary`; the Markdown report provides the prose executive summary |
+| `risks` | `results[].risks.flags[]` (severity, explanation, evidence, confidence) |
+| `positive_factors` | `results[].disclosure.findings[]` filtered by `category == "positive_factor"` |
+| `score_breakdown` | `results[].score` (all sub-scores, final score, reasons, confidence) |
+| `signal` | `results[].signal` — present only when `trade_signal` mode was explicitly enabled |
+
+`document_type` and `fiscal_year` are propagated from the source
+`DisclosureDocument` through both the rule-based and no-op LLM analyzers; they
+are `null` when the source did not provide them (e.g. fiscal year for plain
+local text files), but the paths themselves are always present.
 
 ## Boundary rules
 

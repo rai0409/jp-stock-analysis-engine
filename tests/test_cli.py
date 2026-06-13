@@ -86,6 +86,27 @@ def test_trade_signal_mode_emits_signals(fixtures_dir, tmp_path):
     assert "## Screening" in report
 
 
+def test_rag_export_stable_paths_in_json(fixtures_dir, tmp_path):
+    """Future RAG ingestion pins to these JSON paths; keep them stable."""
+    assert _run(fixtures_dir, tmp_path, mode="trade_signal") == 0
+    payload = json.loads((tmp_path / "screening.json").read_text(encoding="utf-8"))
+    for entry in payload["results"]:
+        assert entry["ticker"]
+        assert "company_name" in entry
+        assert entry["fundamentals"]["fiscal_year"] == 2024
+        disclosure = entry["disclosure"]
+        assert disclosure["document_type"] == "local_text"
+        assert "fiscal_year" in disclosure  # null for local text files, but path is stable
+        for finding in disclosure["findings"]:
+            assert finding["evidence_text"]
+            assert finding["summary"]
+        positive = [f for f in disclosure["findings"] if f["category"] == "positive_factor"]
+        assert isinstance(positive, list)  # positive_factors derivable by category filter
+        assert entry["risks"]["flags"] is not None
+        assert entry["score"]["reasons"]  # analysis summary equivalent
+        assert "signal" in entry  # only present because trade_signal mode is enabled
+
+
 def test_output_is_deterministic(fixtures_dir, tmp_path):
     first_dir = tmp_path / "first"
     second_dir = tmp_path / "second"

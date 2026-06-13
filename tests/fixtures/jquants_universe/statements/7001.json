@@ -1,0 +1,34 @@
+[
+ {
+  "DisclosedDate": "2023-05-10",
+  "TypeOfCurrentPeriod": "FY",
+  "CurrentPeriodEndDate": "2023-03-31",
+  "CurrentFiscalYearEndDate": "2023-03-31",
+  "NetSales": "3000000000000",
+  "OperatingProfit": "330000000000",
+  "Profit": "200000000000",
+  "EarningsPerShare": "200",
+  "BookValuePerShare": "2116.0",
+  "ResultDividendPerShareAnnual": "64.0",
+  "AverageNumberOfShares": "1000000000",
+  "TotalAssets": "3847300000000",
+  "Equity": "2116000000000",
+  "CashFlowsFromOperatingActivities": "363000000000"
+ },
+ {
+  "DisclosedDate": "2024-05-10",
+  "TypeOfCurrentPeriod": "FY",
+  "CurrentPeriodEndDate": "2024-03-31",
+  "CurrentFiscalYearEndDate": "2024-03-31",
+  "NetSales": "3300000000000",
+  "OperatingProfit": "396000000000",
+  "Profit": "230000000000",
+  "EarningsPerShare": "230",
+  "BookValuePerShare": "2300",
+  "ResultDividendPerShareAnnual": "80",
+  "AverageNumberOfShares": "1000000000",
+  "TotalAssets": "4181800000000",
+  "Equity": "2300000000000",
+  "CashFlowsFromOperatingActivities": "435600000000"
+ }
+]
