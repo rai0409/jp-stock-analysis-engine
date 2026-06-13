@@ -68,6 +68,10 @@ from jp_stock_analysis.schemas import (
     SignalMode,
     StockAnalysisResult,
 )
+from jp_stock_analysis.validation.forward_returns import (
+    load_forward_return_report,
+    write_forward_return_outputs,
+)
 
 
 def _analyze_ticker(
@@ -299,12 +303,92 @@ def build_parser() -> argparse.ArgumentParser:
     )
     analyze.add_argument("--from-date", default=None, help="YYYY-MM-DD price range start")
     analyze.add_argument("--to-date", default=None, help="YYYY-MM-DD price range end")
+
+    validate = subparsers.add_parser(
+        "validate-forward-returns",
+        help="measure realized forward returns from a screening.json and a later "
+        "prices CSV (research-only; no trading signals)",
+    )
+    validate.add_argument(
+        "--screening-json",
+        required=True,
+        help="path to a screening.json produced by the analyze command",
+    )
+    validate.add_argument(
+        "--prices",
+        required=True,
+        help="path to a local prices CSV with ticker,date,close columns",
+    )
+    validate.add_argument(
+        "--output-dir", required=True, help="directory for forward-return outputs"
+    )
+    validate.add_argument(
+        "--horizons",
+        default="5,20,60",
+        help="comma-separated trading-row horizons (default: 5,20,60)",
+    )
+    validate.add_argument(
+        "--analysis-date",
+        default=None,
+        help="YYYY-MM-DD fallback analysis date for tickers whose screening.json "
+        "result has no analysis_date",
+    )
+    validate.add_argument(
+        "--no-markdown",
+        action="store_true",
+        help="skip writing forward_returns.md",
+    )
     return parser
+
+
+def _parse_horizons(raw: str) -> list[int]:
+    horizons: list[int] = []
+    for part in raw.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        try:
+            value = int(token)
+        except ValueError as exc:
+            raise ValueError(f"invalid horizon {token!r}: must be an integer") from exc
+        if value < 1:
+            raise ValueError(f"invalid horizon {value}: must be a positive integer")
+        horizons.append(value)
+    if not horizons:
+        raise ValueError("--horizons must contain at least one positive integer")
+    return horizons
+
+
+def _run_validate_forward_returns(args: argparse.Namespace) -> int:
+    try:
+        horizons = _parse_horizons(args.horizons)
+        analysis_date_override = None
+        if args.analysis_date:
+            analysis_date_override = date.fromisoformat(args.analysis_date)
+        report = load_forward_return_report(
+            args.screening_json,
+            args.prices,
+            horizons,
+            analysis_date_override,
+        )
+        paths = write_forward_return_outputs(
+            report, args.output_dir, write_markdown=not args.no_markdown
+        )
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    for warning in report.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    print(f"Forward-return validation written to: {paths['json_path'].parent}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "validate-forward-returns":
+        return _run_validate_forward_returns(args)
     if args.command != "analyze":
         return 2
     if args.provider == "local" and not args.prices:
