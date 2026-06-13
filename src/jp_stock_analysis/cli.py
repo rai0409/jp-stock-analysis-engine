@@ -49,6 +49,21 @@ from jp_stock_analysis.analysis.signal_engine import generate_signals
 from jp_stock_analysis.analysis.valuation import analyze_valuation
 from jp_stock_analysis.config import AnalysisConfig
 from jp_stock_analysis.errors import JPStockAnalysisError, ProviderError
+from jp_stock_analysis.modeling.baseline_ranker import score_baseline, scored_observations
+from jp_stock_analysis.modeling.dataset import build_modeling_dataset, write_dataset_outputs
+from jp_stock_analysis.modeling.fixtures import build_synthetic_bundle
+from jp_stock_analysis.modeling.ml_models import MODEL_TYPES, train_ranking_model
+from jp_stock_analysis.modeling.ranking_metrics import evaluate_ranking, write_ranking_outputs
+from jp_stock_analysis.modeling.report import (
+    build_modeling_report,
+    write_modeling_report_outputs,
+)
+from jp_stock_analysis.modeling.walk_forward import (
+    MODE_EXPANDING,
+    MODE_ROLLING,
+    build_walk_forward_plan,
+    write_walk_forward_outputs,
+)
 from jp_stock_analysis.providers.jquants import JQuantsProvider
 from jp_stock_analysis.providers.local_csv import (
     load_company_metadata_csv,
@@ -74,6 +89,7 @@ from jp_stock_analysis.validation.forward_returns import (
 )
 from jp_stock_analysis.validation.jquants_prices import export_jquants_prices_csv
 from jp_stock_analysis.validation.no_lookahead import (
+    load_bundle_disclosure_date,
     load_readiness_report,
     write_readiness_outputs,
 )
@@ -450,6 +466,61 @@ def build_parser() -> argparse.ArgumentParser:
     readiness.add_argument(
         "--no-markdown", action="store_true", help="skip writing forward_readiness.md"
     )
+
+    # ----- modeling subcommands (offline; research-only; no trading signals) ----
+    build_ds = subparsers.add_parser(
+        "build-modeling-dataset",
+        help="build an offline modeling dataset (factors + forward-return labels) "
+        "with no-look-ahead guardrails; research-only",
+    )
+    _add_modeling_input_args(build_ds)
+
+    rank = subparsers.add_parser(
+        "evaluate-factor-ranking",
+        help="evaluate the baseline factor ranker with Rank IC / quantile metrics "
+        "(research-only; no trading signals)",
+    )
+    _add_modeling_input_args(rank)
+
+    wf = subparsers.add_parser(
+        "run-walk-forward-ranking",
+        help="generate domain-aware walk-forward folds over decision dates "
+        "(research-only)",
+    )
+    _add_modeling_input_args(wf)
+    wf.add_argument(
+        "--mode",
+        default=MODE_EXPANDING,
+        choices=[MODE_EXPANDING, MODE_ROLLING],
+        help="expanding (default) or rolling training window",
+    )
+    wf.add_argument("--min-train-periods", default=1, type=int)
+    wf.add_argument("--test-periods", default=1, type=int)
+
+    train = subparsers.add_parser(
+        "train-ranking-model",
+        help="train a ranking model (baseline, or optional LightGBM/CatBoost; "
+        "missing optional deps are skipped, not failed); research-only",
+    )
+    _add_modeling_input_args(train)
+    train.add_argument(
+        "--model-type", default=MODEL_TYPES[0], choices=list(MODEL_TYPES)
+    )
+    train.add_argument("--horizon", default=20, type=int, help="training label horizon")
+
+    report = subparsers.add_parser(
+        "modeling-report",
+        help="produce the full offline modeling report (coverage, ranking, "
+        "walk-forward, model comparison, no-look-ahead status); research-only",
+    )
+    _add_modeling_input_args(report)
+    report.add_argument(
+        "--mode",
+        default=MODE_EXPANDING,
+        choices=[MODE_EXPANDING, MODE_ROLLING],
+    )
+    report.add_argument("--min-train-periods", default=1, type=int)
+    report.add_argument("--test-periods", default=1, type=int)
     return parser
 
 
@@ -584,6 +655,203 @@ def _run_check_forward_readiness(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- #
+# Modeling subcommands (offline; research-only; no trading signals)
+# --------------------------------------------------------------------------- #
+def _add_modeling_input_args(sub: argparse.ArgumentParser) -> None:
+    sub.add_argument(
+        "--synthetic",
+        action="store_true",
+        help="use the built-in deterministic synthetic fixture bundle (offline; "
+        "SYNTHETIC ONLY — results are not market evidence)",
+    )
+    sub.add_argument("--prices", default=None, help="prices CSV (ticker,date,close)")
+    sub.add_argument("--fundamentals", default=None, help="fundamentals CSV")
+    sub.add_argument("--metadata", default=None, help="company metadata CSV")
+    sub.add_argument(
+        "--decision-dates",
+        default=None,
+        help="comma-separated YYYY-MM-DD decision dates (file inputs)",
+    )
+    sub.add_argument(
+        "--disclosure-date", default=None, help="YYYY-MM-DD bundle disclosure date"
+    )
+    sub.add_argument(
+        "--disclosure-index",
+        default=None,
+        help="topix1000 export index.json (reads target_date as the disclosure date)",
+    )
+    sub.add_argument(
+        "--horizons", default="5,20,60", help="comma-separated horizons (default 5,20,60)"
+    )
+    sub.add_argument(
+        "--include-non-consolidated",
+        action="store_true",
+        help="include non_consolidated rows (excluded by default; never pooled silently)",
+    )
+    sub.add_argument(
+        "--n-quantiles", default=5, type=int, help="quantile buckets (default 5)"
+    )
+    sub.add_argument("--output-dir", required=True, help="directory for outputs")
+
+
+def _load_modeling_dataset(args: argparse.Namespace):
+    """Build a ModelingDataset + prices from --synthetic or file inputs."""
+    horizons = _parse_horizons(args.horizons)
+    if args.synthetic:
+        bundle = build_synthetic_bundle()
+        dataset = build_modeling_dataset(
+            bundle.fundamentals,
+            bundle.prices,
+            bundle.metadata,
+            bundle.narratives,
+            decision_dates=bundle.decision_dates,
+            horizons=horizons,
+            bundle_disclosure_date=bundle.bundle_disclosure_date,
+            include_non_consolidated=args.include_non_consolidated,
+            is_synthetic=True,
+        )
+        return dataset, bundle.prices, bundle.bundle_disclosure_date
+
+    if not args.prices or not args.fundamentals:
+        raise ValueError("file inputs require --prices and --fundamentals (or use --synthetic)")
+    if not args.decision_dates:
+        raise ValueError("file inputs require --decision-dates")
+    decision_dates = [
+        date.fromisoformat(d.strip()) for d in args.decision_dates.split(",") if d.strip()
+    ]
+    if not decision_dates:
+        raise ValueError("--decision-dates must contain at least one YYYY-MM-DD")
+    disclosure_date = None
+    if args.disclosure_date:
+        disclosure_date = date.fromisoformat(args.disclosure_date)
+    elif args.disclosure_index:
+        disclosure_date = load_bundle_disclosure_date(args.disclosure_index)
+
+    prices = load_prices_csv(args.prices)
+    fundamentals = load_fundamentals_csv(args.fundamentals)
+    metadata = load_company_metadata_csv(args.metadata) if args.metadata else {}
+    dataset = build_modeling_dataset(
+        fundamentals,
+        prices,
+        metadata,
+        decision_dates=decision_dates,
+        horizons=horizons,
+        bundle_disclosure_date=disclosure_date,
+        include_non_consolidated=args.include_non_consolidated,
+        is_synthetic=False,
+    )
+    return dataset, prices, disclosure_date
+
+
+def _run_build_modeling_dataset(args: argparse.Namespace) -> int:
+    try:
+        dataset, _prices, _disclosure = _load_modeling_dataset(args)
+        paths = write_dataset_outputs(dataset, args.output_dir)
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Modeling dataset: {len(dataset.included())}/{len(dataset.observations)} "
+        f"eligible observations. Written to: {paths['csv_path'].parent}"
+    )
+    return 0
+
+
+def _run_evaluate_factor_ranking(args: argparse.Namespace) -> int:
+    try:
+        dataset, _prices, _disclosure = _load_modeling_dataset(args)
+        scores = score_baseline(dataset)
+        scored = [s for s in scored_observations(dataset, scores) if s.score is not None]
+        report = evaluate_ranking(
+            scored,
+            dataset.horizons,
+            model_label="baseline_factor_ranker",
+            is_synthetic=dataset.is_synthetic,
+            n_quantiles=args.n_quantiles,
+        )
+        paths = write_ranking_outputs(report, args.output_dir)
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Factor ranking validation written to: {paths['json_path'].parent}")
+    return 0
+
+
+def _run_walk_forward_ranking(args: argparse.Namespace) -> int:
+    try:
+        dataset, _prices, _disclosure = _load_modeling_dataset(args)
+        plan = build_walk_forward_plan(
+            dataset.decision_dates,
+            horizons=dataset.horizons,
+            mode=args.mode,
+            min_train_periods=args.min_train_periods,
+            test_periods=args.test_periods,
+        )
+        paths = write_walk_forward_outputs(plan, args.output_dir)
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Walk-forward plan: {len(plan.folds)} folds ({plan.mode}). "
+        f"Written to: {paths['json_path'].parent}"
+    )
+    return 0
+
+
+def _run_train_ranking_model(args: argparse.Namespace) -> int:
+    try:
+        dataset, _prices, _disclosure = _load_modeling_dataset(args)
+        result = train_ranking_model(
+            dataset, args.model_type, horizon=args.horizon, n_quantiles=args.n_quantiles
+        )
+        out_dir = Path(args.output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        import json as _json
+
+        (out_dir / "model_result.json").write_text(
+            _json.dumps(result.to_dict(), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        if result.is_trained and result.scored:
+            ranking = evaluate_ranking(
+                result.scored,
+                dataset.horizons,
+                model_label=args.model_type,
+                is_synthetic=dataset.is_synthetic,
+                n_quantiles=args.n_quantiles,
+            )
+            write_ranking_outputs(ranking, args.output_dir)
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Model `{args.model_type}`: status={result.status}. "
+        f"Written to: {args.output_dir}"
+    )
+    return 0
+
+
+def _run_modeling_report(args: argparse.Namespace) -> int:
+    try:
+        dataset, prices, disclosure_date = _load_modeling_dataset(args)
+        report = build_modeling_report(
+            dataset,
+            prices,
+            bundle_disclosure_date=disclosure_date,
+            n_quantiles=args.n_quantiles,
+            walk_forward_mode=args.mode,
+            min_train_periods=args.min_train_periods,
+            test_periods=args.test_periods,
+        )
+        paths = write_modeling_report_outputs(report, args.output_dir)
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Modeling report written to: {paths['json_path'].parent}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -595,6 +863,16 @@ def main(argv: list[str] | None = None) -> int:
         return _run_fetch_jquants_prices(args)
     if args.command == "check-forward-readiness":
         return _run_check_forward_readiness(args)
+    if args.command == "build-modeling-dataset":
+        return _run_build_modeling_dataset(args)
+    if args.command == "evaluate-factor-ranking":
+        return _run_evaluate_factor_ranking(args)
+    if args.command == "run-walk-forward-ranking":
+        return _run_walk_forward_ranking(args)
+    if args.command == "train-ranking-model":
+        return _run_train_ranking_model(args)
+    if args.command == "modeling-report":
+        return _run_modeling_report(args)
     if args.command != "analyze":
         return 2
     if args.provider == "local" and not args.prices:

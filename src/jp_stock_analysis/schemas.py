@@ -82,6 +82,10 @@ class FinancialStatement(SchemaBase):
     ticker: str
     fiscal_year: int | None = None
     fiscal_period: str | None = None
+    # consolidated / non_consolidated / mixed / unknown — the basis the figures
+    # below are reported on. Never mix bases silently; the modeling layer filters
+    # on this (see modeling/dataset.py). None when the source did not label it.
+    accounting_basis: str | None = None
     revenue: float | None = None
     operating_income: float | None = None
     net_income: float | None = None

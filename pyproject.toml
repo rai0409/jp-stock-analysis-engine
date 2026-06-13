@@ -14,6 +14,20 @@ dev = [
   "pytest>=8.0",
   "ruff>=0.5",
 ]
+# Optional modeling backends. The modeling package itself needs no extra deps
+# (it uses the core pandas/numpy); these only add the optional ML rankers and
+# are NEVER required for a minimal install or for the test-suite to pass.
+modeling = []
+lightgbm = [
+  "lightgbm>=4.0",
+]
+catboost = [
+  "catboost>=1.2",
+]
+all-modeling = [
+  "lightgbm>=4.0",
+  "catboost>=1.2",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

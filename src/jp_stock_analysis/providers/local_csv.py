@@ -56,6 +56,8 @@ _FUNDAMENTALS_ALIASES = {
     "fy": "fiscal_year",
     "fiscal_period": "fiscal_period",
     "period": "fiscal_period",
+    "accounting_basis": "accounting_basis",
+    "basis": "accounting_basis",
     "revenue": "revenue",
     "sales": "revenue",
     "net_sales": "revenue",
@@ -203,6 +205,7 @@ def load_fundamentals_csv(path: str | Path) -> dict[str, list[FinancialStatement
                 ticker=ticker,
                 fiscal_year=_to_int(row.get("fiscal_year")),
                 fiscal_period=row.get("fiscal_period") or None,
+                accounting_basis=row.get("accounting_basis") or None,
                 source_metadata={"source": str(path)},
                 **figures,
             )

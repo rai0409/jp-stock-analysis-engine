@@ -1,0 +1,15 @@
+{
+  "synthetic": true,
+  "warning": "SYNTHETIC FIXTURE — not real market data.",
+  "decision_dates": [
+    "2025-02-12",
+    "2025-03-26",
+    "2025-05-07"
+  ],
+  "bundle_disclosure_date": "2025-02-11",
+  "horizons": [
+    5,
+    20,
+    60
+  ]
+}
