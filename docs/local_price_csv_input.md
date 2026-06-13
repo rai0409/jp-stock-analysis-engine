@@ -122,11 +122,12 @@ python -m jp_stock_analysis.cli validate-forward-returns \
   Corporate actions (splits, dividends) are not accounted for; a `.T`-suffix
   source does not imply adjusted data. Forward returns computed from raw closes
   can be distorted around such events.
-- **No predictive conclusion until real prices are supplied and the harness is
-  run.** As of this writing no real local price history for 3928/4107/4264
-  after 2026-03-27 has been found on this machine, so no real forward-return
-  validation has been completed. The numbers only become meaningful once a
-  genuine local CSV is prepared with the command above and the harness is run.
+- **Real prices are now obtainable via `fetch-jquants-prices`** (J-Quants V2
+  `/v2/equities/bars/daily`, verified 2026-06-13). A real run was completed but
+  is **inconclusive** (n=3, and ticker 4107's raw series contains an unadjusted
+  stock split). See `docs/forward_return_validation_results.md`. The current
+  J-Quants plan covers only 2024-03-21 ~ 2026-03-21, so forward windows past
+  2026-03-21 cannot be fetched on this subscription.
 - **Small sample.** Even with real prices, only 3 tickers have fundamentals;
   any result is descriptive, not statistically significant.
 - **No financial advice, no trading automation.** This pipeline is a

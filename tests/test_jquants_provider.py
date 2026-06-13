@@ -133,12 +133,15 @@ def test_invalid_cache_file_raises_provider_error(tmp_path):
 
 
 def test_live_fetch_uses_injected_http_and_writes_cache(tmp_path, monkeypatch):
-    """Fetch logic verified with an injected fake transport — no real network."""
+    """Fetch logic verified with an injected fake transport — no real network.
+
+    Uses the V2 response shape: rows under ``data`` with abbreviated field names.
+    """
     monkeypatch.delenv(ENV_API_KEY, raising=False)
     pages = [
-        {"daily_quotes": [{"Date": "2025-01-06", "Code": "72030", "Close": 100.0}],
+        {"data": [{"Date": "2025-01-06", "Code": "72030", "C": 100.0}],
          "pagination_key": "next"},
-        {"daily_quotes": [{"Date": "2025-01-07", "Code": "72030", "Close": 101.0}]},
+        {"data": [{"Date": "2025-01-07", "Code": "72030", "C": 101.0}]},
     ]
     calls: list[tuple[str, dict[str, str]]] = []
 
@@ -164,13 +167,39 @@ def test_live_fetch_uses_injected_http_and_writes_cache(tmp_path, monkeypatch):
 
 
 def test_default_endpoint_urls():
+    """Defaults resolve to the verified V2 routes."""
     provider = _provider()
     assert (
         provider.endpoint_url("daily_quotes")
-        == "https://api.jquants.com/v2/prices/daily_quotes"
+        == "https://api.jquants.com/v2/equities/bars/daily"
     )
-    assert provider.endpoint_url("statements") == "https://api.jquants.com/v2/fins/statements"
-    assert provider.endpoint_url("listed_info") == "https://api.jquants.com/v2/listed/info"
+    assert provider.endpoint_url("statements") == "https://api.jquants.com/v2/fins/summary"
+    assert provider.endpoint_url("listed_info") == "https://api.jquants.com/v2/equities/master"
+
+
+def test_v2_daily_bars_fields_map_to_price_bars(tmp_path, monkeypatch):
+    """The verified V2 /equities/bars/daily field names map correctly."""
+    monkeypatch.delenv(ENV_API_KEY, raising=False)
+    row = {
+        "Date": "2026-03-19", "Code": "39280",
+        "O": 1100.0, "H": 1150.0, "L": 1090.0, "C": 1125.0,
+        "AdjC": 1125.0, "Vo": 250000, "Va": 281250000,
+    }
+
+    def transport(url: str, headers: dict[str, str]) -> dict:
+        return {"data": [row]}
+
+    provider = JQuantsProvider(
+        cache_dir=tmp_path / "c", live=True, api_key="k", http_get=transport
+    )
+    bars = provider.get_prices("3928")
+    assert len(bars) == 1
+    bar = bars[0]
+    assert bar.ticker == "3928"  # requested code preserved, not the 5-digit row Code
+    assert bar.date == date(2026, 3, 19)
+    assert (bar.open, bar.high, bar.low, bar.close) == (1100.0, 1150.0, 1090.0, 1125.0)
+    assert bar.adjusted_close == 1125.0
+    assert bar.volume == 250000.0
 
 
 def test_endpoint_does_not_exist_maps_to_helpful_error(tmp_path):
@@ -211,6 +240,45 @@ def test_malformed_authorization_maps_to_helpful_error(tmp_path):
     assert "secret-key-123" not in message
 
 
+def test_v1_retired_maps_to_migration_error(tmp_path):
+    body = (
+        '{"message": "J-QuantsはV2に移行しました。", '
+        '"migration_url": "https://jpx-jquants.com/ja/spec/migration-v1-v2"}'
+    )
+    provider = JQuantsProvider(
+        cache_dir=tmp_path / "empty",
+        live=True,
+        api_key="secret-key-123",
+        http_get=_raise_http_error(body, code=410),
+    )
+    with pytest.raises(ProviderError) as err:
+        provider.get_prices("7203")
+    message = str(err.value)
+    assert "V1 has been retired" in message
+    assert "/equities/bars/daily" in message  # points at the correct V2 path
+    assert "secret-key-123" not in message
+
+
+def test_plan_coverage_limit_maps_to_helpful_error(tmp_path):
+    body = (
+        '{"message": "Your subscription covers the following dates: 2024-03-21 ~ '
+        '2026-03-21. If you want more data, please check other plans:'
+        'https://jpx-jquants.com/#dataset"}'
+    )
+    provider = JQuantsProvider(
+        cache_dir=tmp_path / "empty",
+        live=True,
+        api_key="secret-key-123",
+        http_get=_raise_http_error(body, code=400),
+    )
+    with pytest.raises(ProviderError) as err:
+        provider.get_prices("3928", from_date="2026-03-28")
+    message = str(err.value)
+    assert "plan/date-coverage limit" in message
+    assert "subscription" in message.lower()
+    assert "secret-key-123" not in message
+
+
 def test_other_http_errors_report_status_and_body(tmp_path):
     provider = JQuantsProvider(
         cache_dir=tmp_path / "empty",
@@ -230,7 +298,7 @@ def test_env_endpoint_overrides_change_request_url(tmp_path, monkeypatch):
 
     def transport(url: str, headers: dict[str, str]) -> dict:
         calls.append(url)
-        return {"daily_quotes": []}
+        return {"data": []}
 
     provider = JQuantsProvider(cache_dir=tmp_path / "c", live=True, api_key="k",
                                http_get=transport)

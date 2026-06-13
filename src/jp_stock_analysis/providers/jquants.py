@@ -13,29 +13,36 @@ Design:
 - Rows map into the existing ``PriceBar`` / ``FinancialStatement`` /
   ``CompanyMetadata`` schemas. Missing fields stay ``None`` — never fabricated.
 
-Adapter assumptions (isolated in the ``_map_*`` helpers and ``_DATASETS``
-table; verify against the official spec at https://jpx-jquants.com/spec/
-before live use):
+V2 endpoint facts (verified against live probes on 2026-06-13 and the official
+migration guide https://jpx-jquants.com/ja/spec/migration-v1-v2):
 
-- the API key is sent as the ``x-api-key`` request header. It is NOT a
-  Bearer token: a live probe showed ``Authorization: Bearer <api-key>`` is
-  rejected as malformed.
-- default endpoints ``/v2/prices/daily_quotes``, ``/v2/fins/statements``,
-  ``/v2/listed/info`` with a ``code`` query parameter and ``pagination_key``
-  pagination. A live probe of ``/v2/prices/daily_quotes`` returned HTTP 403
-  "The requested endpoint does not exist", so the exact version/paths are
-  UNVERIFIED — they are configurable without code changes via environment
-  variables (checked at construction time; explicit constructor arguments
-  win over the environment):
+- J-Quants V1 was retired ("J-QuantsはV2に移行しました。", HTTP 410). V2 is the
+  only live version.
+- the API key is sent as the ``x-api-key`` request header (a dashboard-issued
+  API key under V2; the V1 ID-token / refresh-token flow is gone). It is NOT a
+  Bearer token — an ``Authorization`` header is rejected by the API gateway.
+- the V2 routes were restructured (verified, HTTP 200 with ``x-api-key``):
+
+  - daily OHLC: ``/v2/equities/bars/daily``   (was ``/v1/prices/daily_quotes``)
+  - financials: ``/v2/fins/summary``          (was ``/v1/fins/statements``)
+  - listed master: ``/v2/equities/master``    (was ``/v1/listed/info``)
+
+  with a ``code`` query parameter, optional ``from`` / ``to`` (``YYYY-MM-DD``),
+  and ``pagination_key`` pagination. Paths/version/base are still overridable
+  without code changes via environment variables (checked at construction time;
+  explicit constructor arguments win over the environment):
 
   - ``JQUANTS_API_BASE_URL``      (default ``https://api.jquants.com``)
   - ``JQUANTS_API_VERSION``       (default ``v2``)
-  - ``JQUANTS_DAILY_QUOTES_PATH`` (default ``/prices/daily_quotes``)
-  - ``JQUANTS_STATEMENTS_PATH``   (default ``/fins/statements``)
-  - ``JQUANTS_LISTED_INFO_PATH``  (default ``/listed/info``)
+  - ``JQUANTS_DAILY_QUOTES_PATH`` (default ``/equities/bars/daily``)
+  - ``JQUANTS_STATEMENTS_PATH``   (default ``/fins/summary``)
+  - ``JQUANTS_LISTED_INFO_PATH``  (default ``/equities/master``)
 
-- response rows live under ``daily_quotes`` / ``statements`` / ``info``
-- numeric fields may arrive as strings; empty strings mean missing
+- V2 response rows live under the top-level ``data`` key.
+- V2 field names are abbreviated (``C`` close, ``O``/``H``/``L``, ``Vo``
+  volume, ``AdjC`` adjusted close, ``Sales``/``OP``/``NP`` …). The ``_map_*``
+  helpers read V2 names first and fall back to the V1 names so older synthetic
+  caches keep working. Numeric fields may arrive as strings; empty = missing.
 
 Error messages never contain the API key. J-Quants raw data must not be
 redistributed; cache files are for local use only and are not committed
@@ -64,32 +71,41 @@ DEFAULT_BASE_URL = "https://api.jquants.com"
 DEFAULT_API_VERSION = "v2"
 DEFAULT_CACHE_DIR = ".cache/jquants"
 SPEC_URL = "https://jpx-jquants.com/spec/"
+MIGRATION_URL = "https://jpx-jquants.com/ja/spec/migration-v1-v2"
 
-# dataset name -> (default endpoint path, response rows key, path override env var)
+# V2 response rows live under this top-level key; older V1 caches used a
+# dataset-specific key, still accepted as a fallback (see ``_rows_from_payload``).
+V2_ROWS_KEY = "data"
+
+# dataset name -> (default V2 endpoint path, legacy V1 rows key, path override env var)
 _DATASETS = {
-    "daily_quotes": ("/prices/daily_quotes", "daily_quotes", "JQUANTS_DAILY_QUOTES_PATH"),
-    "statements": ("/fins/statements", "statements", "JQUANTS_STATEMENTS_PATH"),
-    "listed_info": ("/listed/info", "info", "JQUANTS_LISTED_INFO_PATH"),
+    "daily_quotes": ("/equities/bars/daily", "daily_quotes", "JQUANTS_DAILY_QUOTES_PATH"),
+    "statements": ("/fins/summary", "statements", "JQUANTS_STATEMENTS_PATH"),
+    "listed_info": ("/equities/master", "info", "JQUANTS_LISTED_INFO_PATH"),
 }
 
 _PATH_ENV_VARS = ", ".join(env_name for _, _, env_name in _DATASETS.values())
 
 # FinancialStatement field -> candidate J-Quants column names, first match wins.
+# V2 (/fins/summary) abbreviated names are listed first, then the legacy V1
+# (/fins/statements) names as a fallback for older caches.
 # capital_expenditure has no direct J-Quants statements column and stays None.
 _STATEMENT_FIELD_CANDIDATES: dict[str, tuple[str, ...]] = {
-    "revenue": ("NetSales", "Revenue"),
-    "operating_income": ("OperatingProfit",),
-    "net_income": ("Profit", "NetIncome"),
-    "eps": ("EarningsPerShare",),
-    "bps": ("BookValuePerShare",),
-    "dividends_per_share": ("ResultDividendPerShareAnnual",),
+    "revenue": ("Sales", "NetSales", "Revenue"),
+    "operating_income": ("OP", "OperatingProfit"),
+    "net_income": ("NP", "Profit", "NetIncome"),
+    "eps": ("EPS", "EarningsPerShare"),
+    "bps": ("BPS", "BookValuePerShare"),
+    "dividends_per_share": ("DivAnn", "DivFY", "ResultDividendPerShareAnnual"),
     "shares_outstanding": (
+        "ShOutFY",
+        "AvgSh",
         "NumberOfIssuedAndOutstandingSharesAtTheEndOfFiscalYearIncludingTreasuryStock",
         "AverageNumberOfShares",
     ),
-    "total_assets": ("TotalAssets",),
-    "equity": ("Equity",),
-    "operating_cash_flow": ("CashFlowsFromOperatingActivities",),
+    "total_assets": ("TA", "TotalAssets"),
+    "equity": ("Eq", "Equity"),
+    "operating_cash_flow": ("CFO", "CashFlowsFromOperatingActivities"),
 }
 
 
@@ -125,26 +141,36 @@ def _first_float(row: dict[str, Any], names: tuple[str, ...]) -> float | None:
     return None
 
 
+def _first_value(row: dict[str, Any], names: tuple[str, ...]) -> Any:
+    for name in names:
+        value = row.get(name)
+        if value not in (None, ""):
+            return value
+    return None
+
+
 def _map_daily_quote(row: dict[str, Any], ticker: str) -> PriceBar | None:
-    bar_date = _to_date(row.get("Date"))
-    close = _to_float(row.get("Close"))
+    # V2 (/equities/bars/daily) uses abbreviated names; fall back to V1 names.
+    bar_date = _to_date(_first_value(row, ("Date",)))
+    close = _first_float(row, ("C", "Close"))
     if bar_date is None or close is None:
         return None
     return PriceBar(
         ticker=ticker,
         date=bar_date,
-        open=_to_float(row.get("Open")),
-        high=_to_float(row.get("High")),
-        low=_to_float(row.get("Low")),
+        open=_first_float(row, ("O", "Open")),
+        high=_first_float(row, ("H", "High")),
+        low=_first_float(row, ("L", "Low")),
         close=close,
-        adjusted_close=_to_float(row.get("AdjustmentClose")),
-        volume=_to_float(row.get("Volume")),
+        adjusted_close=_first_float(row, ("AdjC", "AdjustmentClose")),
+        volume=_first_float(row, ("Vo", "Volume")),
     )
 
 
 def _map_statement(row: dict[str, Any], ticker: str) -> FinancialStatement:
-    period_end = _to_date(row.get("CurrentFiscalYearEndDate")) or _to_date(
-        row.get("CurrentPeriodEndDate")
+    # V2 (/fins/summary): CurFYEn / CurPerEn / CurPerType / DiscDate; V1 fallback.
+    period_end = _to_date(_first_value(row, ("CurFYEn", "CurrentFiscalYearEndDate"))) or _to_date(
+        _first_value(row, ("CurPerEn", "CurrentPeriodEndDate"))
     )
     figures = {
         field: _first_float(row, names) for field, names in _STATEMENT_FIELD_CANDIDATES.items()
@@ -153,21 +179,22 @@ def _map_statement(row: dict[str, Any], ticker: str) -> FinancialStatement:
         ticker=ticker,
         # assumption: fiscal year labelled by the calendar year the period ends in
         fiscal_year=period_end.year if period_end else None,
-        fiscal_period=row.get("TypeOfCurrentPeriod") or None,
+        fiscal_period=_first_value(row, ("CurPerType", "TypeOfCurrentPeriod")) or None,
         source_metadata={
             "source": "jquants",
-            "disclosed_date": str(row.get("DisclosedDate") or ""),
+            "disclosed_date": str(_first_value(row, ("DiscDate", "DisclosedDate")) or ""),
         },
         **figures,
     )
 
 
 def _map_listed_info(row: dict[str, Any], ticker: str) -> CompanyMetadata:
+    # V2 (/equities/master): CoName / S33Nm / MktNm; V1 fallback names too.
     return CompanyMetadata(
         ticker=ticker,
-        company_name=row.get("CompanyName") or row.get("CompanyNameEnglish") or None,
-        sector=row.get("Sector33CodeName") or row.get("Sector17CodeName") or None,
-        market=row.get("MarketCodeName") or None,
+        company_name=_first_value(row, ("CoName", "CoNameEn", "CompanyName", "CompanyNameEnglish")),
+        sector=_first_value(row, ("S33Nm", "S17Nm", "Sector33CodeName", "Sector17CodeName")),
+        market=_first_value(row, ("MktNm", "MarketCodeName")),
         source_metadata={"source": "jquants"},
     )
 
@@ -272,7 +299,7 @@ class JQuantsProvider:
                 f"live J-Quants fetch requested but the {ENV_API_KEY} environment "
                 "variable is not set; export it or use cached data."
             )
-        rows_key = _DATASETS[dataset][1]
+        legacy_rows_key = _DATASETS[dataset][1]
         rows: list[dict[str, Any]] = []
         pagination_key: str | None = None
         while True:
@@ -287,10 +314,22 @@ class JQuantsProvider:
                 raise ProviderError(_describe_http_error(url, exc)) from exc
             except OSError as exc:
                 raise ProviderError(f"J-Quants request failed for {url}: {exc}") from exc
-            rows.extend(payload.get(rows_key, []))
+            rows.extend(_rows_from_payload(payload, legacy_rows_key))
             pagination_key = payload.get("pagination_key")
             if not pagination_key:
                 return rows
+
+
+def _rows_from_payload(payload: dict[str, Any], legacy_key: str) -> list[dict[str, Any]]:
+    """Extract data rows from a J-Quants response.
+
+    V2 nests rows under ``data``; older V1 responses used a dataset-specific key
+    (``daily_quotes`` / ``statements`` / ``info``), still accepted as a fallback.
+    """
+    rows = payload.get(V2_ROWS_KEY)
+    if rows is None:
+        rows = payload.get(legacy_key, [])
+    return rows or []
 
 
 def _read_error_body(exc: urllib.error.HTTPError) -> str:
@@ -307,13 +346,27 @@ def _describe_http_error(url: str, exc: urllib.error.HTTPError) -> str:
     """Classify HTTP failures into actionable messages. Never includes secrets."""
     body = _read_error_body(exc)
     lowered = body.lower()
+    # V1 retired / migrated to V2 (HTTP 410 "J-QuantsはV2に移行しました。").
+    if exc.code == 410 or "移行" in body or "migration" in lowered:
+        return (
+            f"J-Quants V1 has been retired (HTTP {exc.code}) at {url}: the service migrated "
+            f"to V2. Use the V2 defaults (version {DEFAULT_API_VERSION}, daily quotes path "
+            "/equities/bars/daily) or set the correct override env vars. Migration guide: "
+            f"{MIGRATION_URL}. Server response: {body}"
+        )
     if "endpoint does not exist" in lowered:
         return (
             f"J-Quants endpoint not found (HTTP {exc.code}) at {url}: the configured API "
-            "version or path does not match the service (observed for the default "
-            f"/{DEFAULT_API_VERSION} paths in a live probe). Check the official spec "
-            f"({SPEC_URL}) and override via {ENV_BASE_URL}, {ENV_API_VERSION}, or "
-            f"{_PATH_ENV_VARS}. Server response: {body}"
+            "version or path does not match the service. The verified V2 daily-quotes path "
+            f"is /equities/bars/daily. Check the official spec ({SPEC_URL}) and override via "
+            f"{ENV_BASE_URL}, {ENV_API_VERSION}, or {_PATH_ENV_VARS}. Server response: {body}"
+        )
+    # Plan / subscription window: data requested outside the subscribed date range.
+    if "subscription covers" in lowered or "check other plans" in lowered:
+        return (
+            f"J-Quants plan/date-coverage limit (HTTP {exc.code}) at {url}: the requested "
+            "date range is outside your subscription's covered dates. Narrow the date range "
+            f"to the covered window or upgrade the plan. Server response: {body}"
         )
     if "authorization" in lowered and ("malformed" in lowered or "bearer" in lowered):
         return (
@@ -321,6 +374,13 @@ def _describe_http_error(url: str, exc: urllib.error.HTTPError) -> str:
             "API key is not a Bearer token. This provider sends the key as the x-api-key "
             "header; do not place it in an Authorization header. "
             f"Server response: {body}"
+        )
+    if exc.code in (401, 403):
+        return (
+            f"J-Quants authentication/permission failure (HTTP {exc.code}) at {url}: the "
+            f"{ENV_API_KEY} may be missing, invalid, or lack access to this dataset. The key "
+            "is sent only as the x-api-key header and is never logged. "
+            f"Server response: {body or '(empty)'}"
         )
     return (
         f"J-Quants request failed (HTTP {exc.code}) at {url}. "

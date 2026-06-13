@@ -60,42 +60,51 @@ JQUANTS_API_KEY=... python -m jp_stock_analysis.cli analyze \
 - Prices are mandatory per code; missing statement/metadata caches degrade to
   stderr warnings, mirroring optional local inputs.
 
-## Endpoint configuration (probe findings)
+## Endpoint configuration (V2, verified 2026-06-13)
 
-A live probe (see `tools/jquants_probe.py` and
-`docs/v1_jquants_endpoint_diagnosis.md`) showed that the default
-`/v2/prices/daily_quotes` path returns HTTP 403
-"The requested endpoint does not exist", and that the API key must **not** be
-sent as a Bearer token (the service rejects `Authorization: Bearer <api-key>`
-as malformed). The provider therefore:
+Live probes on 2026-06-13 confirmed J-Quants **V1 is retired** (HTTP 410,
+`J-QuantsはV2に移行しました。`) and that V2 **restructured the routes**. The old
+`/v2/prices/daily_quotes` guess returns HTTP 403 "endpoint does not exist"; the
+correct V2 routes were verified at HTTP 200 with the `x-api-key` header. The API
+key must **not** be sent as a Bearer token (the gateway rejects an
+`Authorization` header). The provider therefore:
 
-- keeps sending the key as the `x-api-key` header only;
-- makes every endpoint component configurable without code changes
-  (explicit constructor arguments win over the environment):
+- sends the dashboard-issued API key as the `x-api-key` header only;
+- defaults to the verified V2 routes and reads rows from the top-level `data`
+  key; field names are mapped V2-first with V1 fallbacks (older caches still
+  load);
+- keeps every endpoint component overridable (explicit constructor arguments
+  win over the environment):
 
-| Environment variable | Default |
-|---|---|
-| `JQUANTS_API_BASE_URL` | `https://api.jquants.com` |
-| `JQUANTS_API_VERSION` | `v2` |
-| `JQUANTS_DAILY_QUOTES_PATH` | `/prices/daily_quotes` |
-| `JQUANTS_STATEMENTS_PATH` | `/fins/statements` |
-| `JQUANTS_LISTED_INFO_PATH` | `/listed/info` |
+| Environment variable | Default (V2, verified) | V1 (retired) |
+|---|---|---|
+| `JQUANTS_API_BASE_URL` | `https://api.jquants.com` | — |
+| `JQUANTS_API_VERSION` | `v2` | `v1` |
+| `JQUANTS_DAILY_QUOTES_PATH` | `/equities/bars/daily` | `/prices/daily_quotes` |
+| `JQUANTS_STATEMENTS_PATH` | `/fins/summary` | `/fins/statements` |
+| `JQUANTS_LISTED_INFO_PATH` | `/equities/master` | `/listed/info` |
 
-Resolved URL: `<base>/<version><path>`. Verify the correct values against the
-official spec (https://jpx-jquants.com/spec/) before live use. When the
-service answers "endpoint does not exist" or rejects the Authorization
-header, the provider raises a `ProviderError` that names the relevant
-override variables; error messages never contain the API key. Cache reads
-ignore endpoint configuration entirely.
+Resolved URL: `<base>/<version><path>`. Error messages distinguish auth
+failure, endpoint-not-found, V1-gone/migrated, and plan/date-coverage limits;
+they never contain the API key. Cache reads ignore endpoint configuration
+entirely. Migration guide: https://jpx-jquants.com/ja/spec/migration-v1-v2.
+
+> A stale local `.env` pinning `JQUANTS_API_VERSION='v1'` /
+> `JQUANTS_DAILY_QUOTES_PATH='/prices/daily_quotes'` overrides the correct V2
+> defaults and reintroduces the HTTP 410. Remove or update those two lines.
 
 ## Field-mapping assumptions
 
-Response field names are adapter-level assumptions isolated in `_DATASETS`
-and the `_map_*` helpers of `jquants.py`. Notable mappings:
-`AdjustmentClose` → `adjusted_close`, `NetSales` → `revenue`,
-`Profit` → `net_income`, fiscal year = calendar year the reporting period
-ends in. J-Quants statements have no capital-expenditure column, so
-`capital_expenditure` stays `None` (never fabricated).
+Response field names are isolated in `_DATASETS` and the `_map_*` helpers of
+`jquants.py`. V2 abbreviated names are mapped first, with V1 names as fallback:
+`C`/`Close` → close, `AdjC`/`AdjustmentClose` → `adjusted_close`, `Vo`/`Volume`
+→ volume; `Sales`/`NetSales` → `revenue`, `OP`/`OperatingProfit` →
+`operating_income`, `NP`/`Profit` → `net_income`, `Eq`/`Equity` → equity,
+`TA`/`TotalAssets` → total assets, `CFO` → operating cash flow. Fiscal year =
+calendar year the reporting period ends in. J-Quants statements have no
+capital-expenditure column, so `capital_expenditure` stays `None` (never
+fabricated). The V2 feed also exposes adjusted OHLC (`AdjC`/`AdjO`/…); the
+price exporter currently writes raw close (`PriceBar.close`).
 
 ## Tests are offline
 

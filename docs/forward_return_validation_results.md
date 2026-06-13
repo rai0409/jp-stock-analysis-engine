@@ -1,113 +1,137 @@
 # Forward-return validation results
 
-**Status: BLOCKED — no real run completed.**
+**Status: real prices acquired and a real forward-return run completed within
+the data-coverage window — but NO predictive conclusion can be drawn (n=3, and
+one ticker's raw series contains an unadjusted stock split).**
 
-As of 2026-06-13 no real forward-return validation has been performed, because
-no real local price history exists on this machine for the three tickers with
-real EDINET-derived fundamentals (3928, 4107, 4264) covering dates after the
-analysis date 2026-03-27, and no J-Quants credentials are available to fetch
-it offline-safely.
+Updated 2026-06-13.
 
-## What was searched (offline, no network)
+## J-Quants V2 endpoint resolution (fixed)
 
-- Local J-Quants cache: only the synthetic test fixture
-  `tests/fixtures/jquants_cache/daily_quotes/7203.json` (ticker 7203, sample
-  data) exists — **not** the target tickers, and not real.
-- `tests/fixtures/prices_sample.csv` — sample tickers 6758/7203/9984; fixture
-  data, not real.
-- `/tmp/*.csv` — only tiny synthetic smoke files (2 dates, round numbers) for
-  3928/4107/4264; explicitly not real prices.
-- `LOCAL_DATA_DIR/...` — EDINET raw/derived data and feature marts; **no price
-  CSV**, no rows matching the target tickers.
+The previous blocker was the J-Quants endpoint, not the key. Confirmed by live
+probes on 2026-06-13 (secret-safe; the API key is sent only in the `x-api-key`
+header and was never printed):
 
-## Environment check (names only; no values printed)
+- `JQUANTS_API_KEY`: **PRESENT**.
+- **V1 is retired.** `GET /v1/prices/daily_quotes` → HTTP 410
+  `J-QuantsはV2に移行しました。` (migration guide:
+  https://jpx-jquants.com/ja/spec/migration-v1-v2).
+- The old guess `/v2/prices/daily_quotes` → HTTP 403
+  `The requested endpoint does not exist.` The V2 routes were **restructured**.
+- **Verified V2 routes** (HTTP 200 with `x-api-key`):
 
-- `JQUANTS_API_KEY`: **MISSING**
-- `JQUANTS_API_BASE_URL`: MISSING (optional override)
-- `JQUANTS_API_VERSION`: MISSING (optional override)
-- `JQUANTS_DAILY_QUOTES_PATH`: MISSING (optional override)
+  | dataset        | V1 (retired)              | V2 (current)              |
+  | -------------- | ------------------------- | ------------------------- |
+  | daily OHLC     | `/v1/prices/daily_quotes` | `/v2/equities/bars/daily` |
+  | financials     | `/v1/fins/statements`     | `/v2/fins/summary`        |
+  | listed master  | `/v1/listed/info`         | `/v2/equities/master`     |
 
-The engine's J-Quants provider authenticates with a single `JQUANTS_API_KEY`
-sent as the `x-api-key` header (see `docs/jquants_provider.md`); it does **not**
-use email/password/refresh-token. A live fetch therefore requires
-`JQUANTS_API_KEY` to be exported in the environment. Note also that the
-provider's default `/v2/...` endpoint paths are **UNVERIFIED** (a live probe
-returned HTTP 403); if the live fetch fails on endpoint resolution, override
-`JQUANTS_API_BASE_URL` / `JQUANTS_API_VERSION` / `JQUANTS_DAILY_QUOTES_PATH`
-per the official spec at https://jpx-jquants.com/spec/.
+- **Auth (unchanged model, simpler):** V2 uses a dashboard-issued API key in the
+  `x-api-key` header. The V1 ID-token / refresh-token flow is gone. An
+  `Authorization` header is rejected by the API gateway.
+- **Response shape changed:** rows are under the top-level `data` key (was
+  `daily_quotes` / `statements` / `info`), and field names are abbreviated
+  (`O`,`H`,`L`,`C`,`Vo`,`AdjC`,`AdjFactor`,`Date`,`Code`; financials use
+  `Sales`,`OP`,`NP`,`EPS`,`BPS`,`Eq`,`TA`,`CFO`,…).
 
-## How to unblock (exact commands)
+The provider now defaults to the verified V2 paths and the `data` rows key, and
+maps the V2 field names (with V1 fallbacks for older caches). Endpoint
+overrides (`JQUANTS_API_BASE_URL`, `JQUANTS_API_VERSION`,
+`JQUANTS_DAILY_QUOTES_PATH`, …) still work. Error messages now distinguish
+auth failure, endpoint-not-found, V1-gone/migrated, and plan/coverage limits.
 
-The acquisition path now exists: `fetch-jquants-prices` (cache-only by default;
-`--allow-network` permits a live fetch when the cache is missing).
+> Note: a local `.env` that still pins `JQUANTS_API_VERSION='v1'` and
+> `JQUANTS_DAILY_QUOTES_PATH='/prices/daily_quotes'` will override the correct
+> V2 defaults and reintroduce the 410. Remove those two overrides (or set them
+> to `v2` and `/equities/bars/daily`). The API key line is untouched.
 
-1. Export credentials (value never shown):
+## Real price acquisition
 
-   ```bash
-   export JQUANTS_API_KEY=...   # required for a live fetch
-   ```
+```bash
+PYTHONPATH=src python -m jp_stock_analysis.cli fetch-jquants-prices \
+  --tickers 3928,4107,4264 --out /tmp/topix1000_forward_prices_raw.csv \
+  --cache-dir /tmp/jq_cache_live --allow-network
+```
 
-2. Fetch real raw prices (network only with `--allow-network`):
+- **Source:** J-Quants V2 `/v2/equities/bars/daily`, raw close (`PriceBar.close`).
+- **Rows fetched:** 488 per ticker.
 
-   ```bash
-   PYTHONPATH=src python -m jp_stock_analysis.cli fetch-jquants-prices \
-     --tickers 3928,4107,4264 \
-     --from-date 2026-03-28 \
-     --out /tmp/topix1000_forward_prices_raw.csv \
-     --allow-network
-   ```
+| ticker | rows | covered range            |
+| ------ | ---- | ------------------------ |
+| 3928   | 488  | 2024-03-21 → 2026-03-19  |
+| 4107   | 488  | 2024-03-21 → 2026-03-19  |
+| 4264   | 488  | 2024-03-21 → 2026-03-19  |
 
-   (Omit `--allow-network` to reuse an existing local cache offline.)
+## The 2026-03-28 target is outside plan coverage (blocked)
 
-3. Normalize / validate coverage:
+The requested window (forward returns from **2026-03-28** onward) cannot be
+satisfied. The subscription covers **2024-03-21 ~ 2026-03-21**; a fetch from
+2026-03-28 returns:
 
-   ```bash
-   PYTHONPATH=src python -m jp_stock_analysis.cli prepare-price-csv \
-     --input /tmp/topix1000_forward_prices_raw.csv \
-     --output /tmp/topix1000_forward_prices.csv \
-     --tickers 3928,4107,4264 \
-     --from-date 2026-03-28 \
-     --min-rows-after 60
-   ```
+```
+HTTP 400 :: "Your subscription covers the following dates: 2024-03-21 ~ 2026-03-21.
+            If you want more data, please check other plans:..."
+```
 
-4. Analyze with the topix1000 bundle:
+`prepare-price-csv --from-date 2026-03-28 --min-rows-after 60` therefore fails
+the coverage check (0 rows on/after 2026-03-28 for every ticker). **No real
+prices exist on/after 2026-03-28 on this plan**; none were fabricated.
 
-   ```bash
-   PYTHONPATH=src python -m jp_stock_analysis.cli analyze \
-     --prices /tmp/topix1000_forward_prices.csv \
-     --metadata /tmp/topix1000_engine_bundle/metadata.csv \
-     --fundamentals /tmp/topix1000_engine_bundle/fundamentals.csv \
-     --disclosure-provider topix1000-export \
-     --topix1000-export-dir /tmp/topix1000_annual_report_export_linked \
-     --output-dir /tmp/jstocks_topix1000_forward_input \
-     --signal-mode analysis_only
-   ```
+## Real run performed within the covered window (deviation, clearly labelled)
 
-5. Validate forward returns:
+To produce a genuine forward-return run with real prices, the decision/analysis
+date was moved inside the covered window: **2025-11-28** (the latest covered
+date that still leaves ≥60 forward trading rows, through 2026-03-19). The
+`analyze` step was fed real closes up to 2025-11-28 (so `analysis_date =
+2025-11-28`); `validate-forward-returns` was fed the full real series so it
+could look forward. No-look-ahead is enforced (base = first row strictly after
+2025-11-28 = 2025-12-01).
 
-   ```bash
-   PYTHONPATH=src python -m jp_stock_analysis.cli validate-forward-returns \
-     --screening-json /tmp/jstocks_topix1000_forward_input/screening.json \
-     --prices /tmp/topix1000_forward_prices.csv \
-     --output-dir /tmp/jstocks_forward_validation_topix1000 \
-     --horizons 5,20,60
-   ```
+Outputs: `/tmp/jstocks_forward_validation_topix1000/forward_returns.{json,csv,md}`
 
-Then replace this file with the real results: source, per-ticker row counts,
-analysis date, horizons, output paths, grouped-summary interpretation, and
-whether `screening_score`/`reliability_grade` ordered forward returns better
-than raw `final_score`.
+| ticker | final_score | screening_score | grade  | h5     | h20      | h60      |
+| ------ | ----------- | --------------- | ------ | ------ | -------- | -------- |
+| 3928   | 41.8        | 12.3            | medium | −3.12% | +17.58%  | +16.41%  |
+| 4107   | 84.6        | 24.9            | medium | −2.50% | −86.15%† | −82.36%† |
+| 4264   | 33.0        | 9.7             | medium | −0.07% | +1.77%   | +25.94%  |
 
-## Caveats (apply even once unblocked)
+† **Data artifact, not an economic return.** Ticker 4107's raw close drops
+43050 → 4985 on 2025-12-29 (−88% in one day): an **unadjusted stock split**.
+Its h20/h60 figures are corrupted by the split, not real losses. The V2 feed
+*does* provide adjusted close (`AdjC`), but this export uses raw close by
+design (see caveat below).
 
-- **No predictive conclusion can be drawn** until real prices are supplied and
-  the harness is run; nothing here is validated.
-- **Raw close, not adjusted close** — corporate actions are not accounted for.
-- **Small sample**: only 3 tickers have fundamentals; any result is descriptive,
-  not statistically significant.
-- **No-look-ahead** is enforced by the harness (base price is the first row
-  strictly after the analysis date).
-- This is a self-directed research tool: no trading signals, no portfolio
-  construction, no position sizing, and not personalized financial advice.
+## Interpretation
 
-**Do not tag** a release on this state: no real validation has been completed.
+**No predictive conclusion can be drawn.** Two independent reasons:
+
+1. **n = 3** — descriptive only, never statistically significant.
+2. **Split contamination** — 4107 (the single highest `final_score`) is
+   dominated by an unadjusted corporate action, so any apparent
+   "high final_score → large negative return" relationship here is a raw-close
+   artifact, not signal.
+
+On the two clean tickers (3928, 4264) both `screening_score` and `final_score`
+order them the same way (3928 above 4264), and 3928's longer-horizon returns
+were higher — but with two clean points this is anecdote, not evidence. The
+question "does `screening_score`/`reliability_grade` beat `final_score`?"
+remains **unanswered** and requires (a) adjusted close and (b) a broad universe
+over multiple non-overlapping decision dates.
+
+## Caveats
+
+- **Raw close, not adjusted close.** Materialized here: 4107's split corrupts
+  its forward returns. A clean run needs adjusted close (`AdjC` is available in
+  the V2 feed) — see the next-step prompt.
+- **Plan/coverage window.** Data ends 2026-03-21; the literal 2026-03-28 target
+  is unreachable on this subscription.
+- **Decision-date deviation.** The run uses analysis date 2025-11-28 (inside
+  coverage), not 2026-03-28; results are not the originally requested window.
+- **Small sample.** Only 3 tickers have real fundamentals.
+- **No-look-ahead** is enforced (base = first row strictly after the analysis
+  date).
+- **No financial advice, no trading automation.** Self-directed research only:
+  no buy/sell/hold signals, no portfolio construction, no position sizing.
+
+**Do not tag** a release as a validated predictive result: the run is real but
+inconclusive (n=3 and a split artifact).
