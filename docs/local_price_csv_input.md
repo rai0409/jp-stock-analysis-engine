@@ -57,6 +57,28 @@ local raw CSV; the preparation step enforces it via `--min-rows-after 60`.
 
 ## Commands
 
+### 0. (Optional) Acquire raw prices from J-Quants
+
+If you don't already have a local raw price CSV, the `fetch-jquants-prices`
+subcommand can produce one from the engine's J-Quants provider. It is
+**cache-only by default** (offline): it reads
+`.cache/jquants/daily_quotes/<ticker>.json` and never touches the network.
+Pass `--allow-network` to permit a live fetch when the cache is missing; a live
+fetch requires the `JQUANTS_API_KEY` environment variable (sent as the
+`x-api-key` header — see `docs/jquants_provider.md`). Tokens are never printed,
+and prices are never fabricated: a ticker with no rows is a hard error.
+
+```bash
+python -m jp_stock_analysis.cli fetch-jquants-prices \
+  --tickers 3928,4107,4264 \
+  --from-date 2026-03-28 \
+  --out /tmp/topix1000_forward_prices_raw.csv \
+  --allow-network
+```
+
+The output is already `ticker,date,close` (raw close), so it can feed
+`prepare-price-csv` directly as `--input`.
+
 ### 1. Prepare the price CSV
 
 ```bash

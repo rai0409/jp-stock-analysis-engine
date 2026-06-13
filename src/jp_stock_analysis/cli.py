@@ -72,6 +72,7 @@ from jp_stock_analysis.validation.forward_returns import (
     load_forward_return_report,
     write_forward_return_outputs,
 )
+from jp_stock_analysis.validation.jquants_prices import export_jquants_prices_csv
 from jp_stock_analysis.validation.price_prep import _parse_tickers, prepare_price_csv
 
 
@@ -366,6 +367,36 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         help="require at least this many rows on or after --from-date per ticker",
     )
+
+    fetch = subparsers.add_parser(
+        "fetch-jquants-prices",
+        help="export a local ticker,date,close CSV from the J-Quants provider "
+        "(cache-only by default; --allow-network permits a live fetch needing "
+        "JQUANTS_API_KEY). Research-only; no trading signals",
+    )
+    fetch.add_argument(
+        "--tickers",
+        required=True,
+        help="comma-separated tickers to fetch (e.g. 3928,4107,4264)",
+    )
+    fetch.add_argument(
+        "--out",
+        required=True,
+        help="path to write the raw ticker,date,close CSV",
+    )
+    fetch.add_argument("--from-date", default=None, help="YYYY-MM-DD price range start (optional)")
+    fetch.add_argument("--to-date", default=None, help="YYYY-MM-DD price range end (optional)")
+    fetch.add_argument(
+        "--cache-dir",
+        default=".cache/jquants",
+        help="J-Quants cache directory (default: .cache/jquants)",
+    )
+    fetch.add_argument(
+        "--allow-network",
+        action="store_true",
+        help="permit a live J-Quants fetch when the cache is missing "
+        "(requires JQUANTS_API_KEY); default is cache-only / offline",
+    )
     return parser
 
 
@@ -438,6 +469,32 @@ def _run_prepare_price_csv(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_fetch_jquants_prices(args: argparse.Namespace) -> int:
+    try:
+        tickers = _parse_tickers(args.tickers)
+        from_date = date.fromisoformat(args.from_date) if args.from_date else None
+        to_date = date.fromisoformat(args.to_date) if args.to_date else None
+        provider = JQuantsProvider(cache_dir=args.cache_dir, live=args.allow_network)
+        result = export_jquants_prices_csv(
+            provider,
+            tickers,
+            args.out,
+            from_date=from_date,
+            to_date=to_date,
+        )
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    for warning in result.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    print(
+        f"Exported {result.total_rows_written} rows for "
+        f"{len(result.tickers)} ticker(s) -> {result.output_path}"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -445,6 +502,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_validate_forward_returns(args)
     if args.command == "prepare-price-csv":
         return _run_prepare_price_csv(args)
+    if args.command == "fetch-jquants-prices":
+        return _run_fetch_jquants_prices(args)
     if args.command != "analyze":
         return 2
     if args.provider == "local" and not args.prices:
