@@ -72,6 +72,7 @@ from jp_stock_analysis.validation.forward_returns import (
     load_forward_return_report,
     write_forward_return_outputs,
 )
+from jp_stock_analysis.validation.price_prep import _parse_tickers, prepare_price_csv
 
 
 def _analyze_ticker(
@@ -338,6 +339,33 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="skip writing forward_returns.md",
     )
+
+    prepare = subparsers.add_parser(
+        "prepare-price-csv",
+        help="validate and normalize a local raw price CSV into the "
+        "ticker,date,close shape forward-return validation consumes "
+        "(offline; no fetching, no fabrication)",
+    )
+    prepare.add_argument("--input", required=True, help="path to a local raw price CSV")
+    prepare.add_argument(
+        "--output", required=True, help="path to write the normalized ticker,date,close CSV"
+    )
+    prepare.add_argument(
+        "--tickers",
+        required=True,
+        help="comma-separated tickers to keep (e.g. 3928,4107,4264)",
+    )
+    prepare.add_argument(
+        "--from-date",
+        required=True,
+        help="YYYY-MM-DD; rows on or after this date count toward --min-rows-after",
+    )
+    prepare.add_argument(
+        "--min-rows-after",
+        default=None,
+        type=int,
+        help="require at least this many rows on or after --from-date per ticker",
+    )
     return parser
 
 
@@ -384,11 +412,39 @@ def _run_validate_forward_returns(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_prepare_price_csv(args: argparse.Namespace) -> int:
+    try:
+        tickers = _parse_tickers(args.tickers)
+        from_date = date.fromisoformat(args.from_date)
+        if args.min_rows_after is not None and args.min_rows_after < 0:
+            raise ValueError("--min-rows-after must be a non-negative integer")
+        result = prepare_price_csv(
+            args.input,
+            args.output,
+            tickers,
+            from_date,
+            min_rows_after=args.min_rows_after,
+        )
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    for warning in result.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    print(
+        f"Prepared {result.total_rows_written} rows for "
+        f"{len(result.tickers)} ticker(s) -> {result.output_path}"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "validate-forward-returns":
         return _run_validate_forward_returns(args)
+    if args.command == "prepare-price-csv":
+        return _run_prepare_price_csv(args)
     if args.command != "analyze":
         return 2
     if args.provider == "local" and not args.prices:
