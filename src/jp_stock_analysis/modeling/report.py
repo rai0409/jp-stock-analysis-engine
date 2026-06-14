@@ -29,9 +29,23 @@ from jp_stock_analysis.modeling.ml_models import (
     available_backends,
     train_ranking_model,
 )
+from jp_stock_analysis.modeling.neutralization import (
+    ExposureObservation,
+    MMCStyleObservation,
+    MMCStyleReport,
+    NeutralizedICReport,
+    mmc_style_contribution,
+    neutralized_rank_ic,
+)
+from jp_stock_analysis.modeling.portfolio_metrics import (
+    PortfolioReport,
+    evaluate_portfolio,
+    observations_from_scored,
+)
 from jp_stock_analysis.modeling.ranking_metrics import (
     RESEARCH_DISCLAIMER,
     RankingReport,
+    ScoredObservation,
     evaluate_ranking,
 )
 from jp_stock_analysis.modeling.walk_forward import (
@@ -42,9 +56,13 @@ from jp_stock_analysis.modeling.walk_forward import (
 from jp_stock_analysis.schemas import PriceBar
 from jp_stock_analysis.validation.no_lookahead import build_readiness_report
 
+DEFAULT_NEUTRALIZE_FACTORS = ("momentum_60d", "leverage")
+
 LIMITATIONS = (
     "This is research infrastructure, not a trading system: it produces no "
     "buy/sell signals and claims no predictive performance.",
+    "The long-short spread evaluation is a research metric inspired by long-short "
+    "competition scoring; it does not claim exchange/execution realism.",
     "Synthetic-fixture results are NOT market evidence; they only prove the "
     "pipeline runs deterministically.",
     "Real validation requires point-in-time disclosure dates and adjusted-close "
@@ -83,6 +101,9 @@ class ModelingReport:
     readiness: dict[str, Any]
     factor_score_distribution: dict[str, float | None]
     backends: dict[str, bool]
+    portfolio_by_horizon: dict[str, PortfolioReport]
+    neutralized: NeutralizedICReport | None
+    mmc_style: MMCStyleReport | None
     disclaimer: str = RESEARCH_DISCLAIMER
 
     def to_dict(self) -> dict[str, Any]:
@@ -120,6 +141,14 @@ class ModelingReport:
             "walk_forward": self.walk_forward.to_dict(),
             "optional_backends": self.backends,
             "model_comparison": [m.to_dict() for m in self.model_comparison],
+            "portfolio_long_short": {
+                horizon: _portfolio_summary(report)
+                for horizon, report in self.portfolio_by_horizon.items()
+            },
+            "neutralized_rank_metrics": (
+                self.neutralized.to_dict() if self.neutralized is not None else None
+            ),
+            "mmc_style": (self.mmc_style.to_dict() if self.mmc_style is not None else None),
             "no_look_ahead_status": self.readiness,
             "limitations": list(LIMITATIONS),
         }
@@ -141,6 +170,58 @@ def _factor_score_distribution(dataset: ModelingDataset) -> dict[str, float | No
     }
 
 
+def _portfolio_summary(report: PortfolioReport) -> dict[str, Any]:
+    """Compact per-horizon portfolio summary (full detail via evaluate-portfolio)."""
+    series = report.series
+    summary = {
+        "status": report.status,
+        "config": report.config,
+        "sharpe_like": series.sharpe_like,
+        "mean_spread": series.mean_spread,
+        "hit_rate": series.hit_rate,
+        "max_drawdown": series.max_drawdown,
+        "observation_count": series.observation_count,
+        "average_turnover": report.turnover.average_turnover,
+        "max_turnover": report.turnover.max_turnover,
+    }
+    if report.transaction_cost is not None:
+        summary["net_mean_spread"] = report.transaction_cost.net_mean_spread
+        summary["transaction_cost_bps"] = report.transaction_cost.transaction_cost_bps
+    return summary
+
+
+def _exposure_observations(
+    dataset: ModelingDataset,
+    scored: Sequence[ScoredObservation],
+    horizon: int,
+    factor_columns: Sequence[str],
+) -> tuple[list[ExposureObservation], list[str]]:
+    """Build neutralization inputs: requested factor columns + sector dummies."""
+    features_by_key = {(o.ticker, o.decision_date): o.features for o in dataset.included()}
+    sectors = sorted({o.sector for o in scored if o.sector})
+    sector_cols = [f"sector::{s}" for s in sectors]
+    label_key = f"forward_return_h{horizon}"
+    out: list[ExposureObservation] = []
+    for obs in scored:
+        features = features_by_key.get((obs.ticker, obs.decision_date), {})
+        exposures: dict[str, float | None] = {
+            col: features.get(col) for col in factor_columns
+        }
+        for sector in sectors:
+            exposures[f"sector::{sector}"] = 1.0 if obs.sector == sector else 0.0
+        out.append(
+            ExposureObservation(
+                decision_date=obs.decision_date,
+                ticker=obs.ticker,
+                prediction=obs.score,
+                forward_return=obs.labels.get(label_key),
+                exposures=exposures,
+                sector=obs.sector,
+            )
+        )
+    return out, [*factor_columns, *sector_cols]
+
+
 def build_modeling_report(
     dataset: ModelingDataset,
     prices: Mapping[str, Sequence[PriceBar]],
@@ -151,6 +232,12 @@ def build_modeling_report(
     min_train_periods: int = 1,
     test_periods: int = 1,
     include_optional_models: bool = True,
+    portfolio_top_quantile: float = 0.2,
+    portfolio_bottom_quantile: float = 0.2,
+    portfolio_rank_weighted: bool = False,
+    transaction_cost_bps: float = 0.0,
+    neutralize_factors: Sequence[str] = DEFAULT_NEUTRALIZE_FACTORS,
+    neutralize_proportion: float = 1.0,
 ) -> ModelingReport:
     """Build the full modeling report from a dataset and its price inputs."""
     horizons = list(dataset.horizons)
@@ -179,6 +266,38 @@ def build_modeling_report(
         dataset, horizons, n_quantiles, include_optional_models
     )
 
+    # JPX-style long-short evaluation per horizon
+    portfolio_by_horizon: dict[str, PortfolioReport] = {}
+    for horizon in horizons:
+        portfolio_by_horizon[str(horizon)] = evaluate_portfolio(
+            observations_from_scored(baseline_scored, horizon),
+            horizon=horizon,
+            model_label=MODEL_BASELINE,
+            is_synthetic=dataset.is_synthetic,
+            top_quantile=portfolio_top_quantile,
+            bottom_quantile=portfolio_bottom_quantile,
+            rank_weighted=portfolio_rank_weighted,
+            transaction_cost_bps=transaction_cost_bps,
+        )
+
+    # Numerai-style neutralized rank metrics (primary horizon)
+    primary_horizon = sorted({int(h) for h in horizons})[0]
+    exposure_obs, exposure_columns = _exposure_observations(
+        dataset, baseline_scored, primary_horizon, neutralize_factors
+    )
+    neutralized = neutralized_rank_ic(
+        exposure_obs,
+        horizon=primary_horizon,
+        exposure_columns=exposure_columns,
+        proportion=neutralize_proportion,
+        is_synthetic=dataset.is_synthetic,
+        model_label=MODEL_BASELINE,
+    )
+
+    mmc_style = _mmc_style_report(
+        dataset, baseline_scored, primary_horizon, n_quantiles
+    )
+
     tickers = sorted({o.ticker for o in dataset.included()}) or sorted(
         {o.ticker for o in dataset.observations}
     )
@@ -194,7 +313,50 @@ def build_modeling_report(
         readiness=readiness,
         factor_score_distribution=_factor_score_distribution(dataset),
         backends=available_backends(),
+        portfolio_by_horizon=portfolio_by_horizon,
+        neutralized=neutralized,
+        mmc_style=mmc_style,
     )
+
+
+def _mmc_style_report(
+    dataset: ModelingDataset,
+    baseline_scored: Sequence[ScoredObservation],
+    horizon: int,
+    n_quantiles: int,
+) -> MMCStyleReport | None:
+    """MMC-style delta vs the first trained optional model, if one is available.
+
+    Requires >=2 model predictions; when no optional backend is installed there
+    is only the baseline, so this returns ``None`` (reported as unavailable).
+    """
+    candidate = None
+    for model_type in MODEL_TYPES:
+        if model_type == MODEL_BASELINE:
+            continue
+        result = train_ranking_model(
+            dataset, model_type, horizon=horizon, n_quantiles=n_quantiles
+        )
+        if result.is_trained and result.scored:
+            candidate = result.scored
+            break
+    if candidate is None:
+        return None
+
+    label_key = f"forward_return_h{horizon}"
+    base_by_key = {(o.ticker, o.decision_date): o.score for o in baseline_scored}
+    obs: list[MMCStyleObservation] = []
+    for cand in candidate:
+        obs.append(
+            MMCStyleObservation(
+                decision_date=cand.decision_date,
+                ticker=cand.ticker,
+                base_prediction=base_by_key.get((cand.ticker, cand.decision_date)),
+                candidate_prediction=cand.score,
+                forward_return=cand.labels.get(label_key),
+            )
+        )
+    return mmc_style_contribution(obs, horizon=horizon, is_synthetic=dataset.is_synthetic)
 
 
 def _model_comparison(
@@ -317,6 +479,63 @@ def _markdown(report: ModelingReport) -> str:
     for m in report.model_comparison:
         ic = ", ".join(f"h{k}={_fmt(v)}" for k, v in sorted(m.ic_by_horizon.items())) or "—"
         lines.append(f"| `{m.model_type}` | {m.status} | {ic} |")
+    lines.append("")
+
+    lines += [
+        "## JPX-style long-short spread evaluation",
+        "",
+        "Research metric inspired by long-short competition scoring; no execution "
+        "realism, no trading signal.",
+        "",
+        "| horizon | status | Sharpe-like | mean spread | hit>0 | max DD | "
+        "avg turnover | net mean |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for horizon, summary in data["portfolio_long_short"].items():
+        lines.append(
+            f"| {horizon} | {summary['status']} | {_fmt(summary['sharpe_like'])} | "
+            f"{_fmt(summary['mean_spread'])} | {_fmt(summary['hit_rate'])} | "
+            f"{_fmt(summary['max_drawdown'])} | {_fmt(summary['average_turnover'])} | "
+            f"{_fmt(summary.get('net_mean_spread'))} |"
+        )
+    lines.append("")
+
+    neutral = data["neutralized_rank_metrics"]
+    lines += ["## Numerai-style neutralized rank metrics", ""]
+    if neutral is None:
+        lines.append("- unavailable")
+    else:
+        diag = neutral["exposure_diagnostics"]
+        lines.append(
+            "Inspired by neutralized ranking concepts; NOT official Numerai scoring."
+        )
+        lines.append("")
+        lines.append(
+            f"- horizon {neutral['horizon']}, exposures {neutral['exposure_columns']} "
+            f"(status {neutral['status']})"
+        )
+        lines.append(
+            f"- Raw IC mean {_fmt(neutral['raw_ic_mean'])} -> neutralized IC mean "
+            f"**{_fmt(neutral['neutralized_ic_mean'])}** (ICIR {_fmt(neutral['neutralized_icir'])})"
+        )
+        lines.append(
+            f"- Max |exposure corr| before/after: "
+            f"{_fmt(diag['max_abs_exposure_corr_before'])} / "
+            f"{_fmt(diag['max_abs_exposure_corr_after'])}"
+        )
+    lines.append("")
+
+    mmc = data["mmc_style"]
+    lines += ["## MMC-style contribution delta", ""]
+    if mmc is None:
+        lines.append("- unavailable (requires >=2 trained model predictions)")
+    else:
+        lines.append(mmc["caveat"])
+        lines.append("")
+        lines.append(
+            f"- status {mmc['status']}, contribution delta "
+            f"**{_fmt(mmc['contribution_delta'])}**, delta vs base {_fmt(mmc['delta_vs_base'])}"
+        )
     lines.append("")
 
     lines += ["## No-look-ahead status", ""]

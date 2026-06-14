@@ -214,9 +214,9 @@ validation?" flags whether the gap prevents a credible real comparison.
 | purged / embargo | DONE |
 | multi-decision-date | DONE |
 | Rank IC / ICIR / quantile spread / hit rate | DONE |
-| Sharpe-like **long-short spread** (mean/std of strategy return) | **NOT STARTED** (only ICIR + mean spread) |
+| Sharpe-like **long-short spread** (mean/std of strategy return) | **DONE (infra)** — `portfolio_metrics.py` (P1); real number still blocked by P0 |
 | decile/quintile spread | DONE |
-| drawdown / transaction cost / liquidity / turnover | NOT STARTED |
+| drawdown / transaction cost / liquidity / turnover | **PARTIAL** — drawdown + turnover + simplified cost DONE; liquidity/cap NOT STARTED |
 | sector-neutral evaluation | DONE (sector-neutral IC) |
 | feature/model stability | NOT STARTED |
 | out-of-time holdout | PARTIAL (walk-forward folds; no dedicated final holdout) |
@@ -272,28 +272,28 @@ fixture metrics are not evidence.
 - **No "beat winners" claim is possible without P0.** Implement nothing that
   depends on real labels until coverage exists.
 
-### P1 — JPX-style ranking / long-short evaluator *(implement now, synthetic-tested)*
-- **Repo:** engine. **Files:** new `modeling/portfolio_metrics.py`,
-  `report.py`, `cli.py`, tests, `docs/`.
-- **Outline:** per decision date, rank predictions; build **top-N long / bottom-N
-  short** with rank-weighting; compute the **daily/period spread return series**,
-  then **Sharpe = mean/std** of that series (the JPX metric type), plus
-  **turnover** and a long-short **equity curve / max drawdown**. Adjusted close
-  only. **No trading automation, no position sizing.**
-- **Test plan:** deterministic synthetic — monotone signal ⇒ positive spread;
-  reversed ⇒ negative; constant ⇒ Sharpe `None`; turnover bounds.
-- **Artifact:** `portfolio_metrics.json/csv/md` + report section.
-- **Risk:** must not be read as a profitability claim → keep research-only labels.
+### P1 — JPX-style ranking / long-short evaluator — ✅ IMPLEMENTED (2026-06-14)
+- **Status:** done as offline, synthetic-tested research infrastructure.
+- **Files:** `modeling/portfolio_metrics.py`, `report.py`, `cli.py`,
+  `tests/test_modeling_portfolio_metrics.py`, `docs/portfolio_evaluation.md`.
+- **Delivered:** per-decision-date top-N/quantile long-short with equal or
+  **rank-weighted** legs; spread series with **Sharpe-like = mean/std** (+ optional
+  annualized), hit rate, **equity curve**, **max drawdown**; **turnover**; optional
+  **simplified transaction cost**. CLI `evaluate-portfolio-ranking` +
+  `modeling-report` section. Research-only; no trading signal; synthetic labelled.
+- **Still pending:** a *real* Sharpe-of-spread number — blocked by P0 data.
 
-### P2 — Numerai-style rank + neutralization metrics *(implement now, synthetic-tested)*
-- **Repo:** engine. **Files:** `modeling/neutralization.py`, `ranking_metrics.py`.
-- **Outline:** regression-residual **feature/market/size/value neutralization**
-  (residualize predictions on chosen exposures); **neutralized Rank IC**; a
-  **meta-model-contribution-style** delta when ≥2 models exist. Numerai-Corr-style
-  rank correlation as an additional metric.
-- **Test plan:** neutralizing against an exposure removes that exposure’s IC;
-  determinism.
-- **Artifact:** neutralized metrics in the ranking report.
+### P2 — Numerai-style rank + neutralization metrics — ✅ IMPLEMENTED (2026-06-14)
+- **Status:** done as offline, synthetic-tested research infrastructure.
+- **Files:** `modeling/neutralization.py`, `report.py`, `cli.py`,
+  `tests/test_modeling_neutralization.py`, `docs/neutralization_metrics.md`.
+- **Delivered:** regression-residual **neutralization** (factor exposures + sector
+  dummies), **neutralized Rank IC** + ICIR per decision date, **exposure
+  diagnostics** (pre/post corr), and an **MMC-STYLE** contribution delta when ≥2
+  model predictions exist. CLI `evaluate-neutralized-ranking` + report section.
+  Explicitly *not* official Numerai scoring.
+- **Still pending:** real exposures (size/value/market) and ≥2 trained models on
+  real data — blocked by P0 and optional-backend installation.
 
 ### P3 — Model improvements *(partially now; GBDT-on-real waits for P0)*
 - **Repo:** engine. **Files:** `modeling/ml_models.py`, new linear adapter,
@@ -342,11 +342,11 @@ public solution repo.
 ## 9. Bottom line
 
 The system is **infrastructure-competitive on hygiene** (no-look-ahead,
-purged/embargo, accounting-basis separation, reproducible research-only reports)
-and **behind on the scoring surface that competitions actually grade** (a
-Sharpe-of-spread long-short evaluator and neutralization) and on **trained-model
-sophistication**. **No performance comparison or "beat the winners" claim is
-possible until P0 real data and strict validation exist.** The highest-value,
-safe next step is to build the **JPX-style ranking evaluator and Numerai-style
-neutralized metrics as offline, synthetic-tested infrastructure** — closing the
-metric-surface gap without making any real-data claim.
+purged/embargo, accounting-basis separation, reproducible research-only reports).
+The metric-surface gap is now **closed at the infrastructure level**: P1 (a
+JPX-style Sharpe-of-spread long-short evaluator with turnover/drawdown/cost) and
+P2 (Numerai-style neutralization + neutralized Rank IC + MMC-style delta) are
+**implemented and synthetic-tested** (2026-06-14). What remains is **trained-model
+sophistication** and, decisively, **real data**: **no performance comparison or
+"beat the winners" claim is possible until P0 real point-in-time data and strict
+validation exist.** Synthetic-fixture numbers are not market evidence.

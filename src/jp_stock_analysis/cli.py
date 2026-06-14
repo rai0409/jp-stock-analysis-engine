@@ -53,6 +53,16 @@ from jp_stock_analysis.modeling.baseline_ranker import score_baseline, scored_ob
 from jp_stock_analysis.modeling.dataset import build_modeling_dataset, write_dataset_outputs
 from jp_stock_analysis.modeling.fixtures import build_synthetic_bundle
 from jp_stock_analysis.modeling.ml_models import MODEL_TYPES, train_ranking_model
+from jp_stock_analysis.modeling.neutralization import (
+    ExposureObservation,
+    neutralized_rank_ic,
+    write_neutralized_outputs,
+)
+from jp_stock_analysis.modeling.portfolio_metrics import (
+    evaluate_portfolio,
+    observations_from_scored,
+    write_portfolio_outputs,
+)
 from jp_stock_analysis.modeling.ranking_metrics import evaluate_ranking, write_ranking_outputs
 from jp_stock_analysis.modeling.report import (
     build_modeling_report,
@@ -521,7 +531,76 @@ def build_parser() -> argparse.ArgumentParser:
     )
     report.add_argument("--min-train-periods", default=1, type=int)
     report.add_argument("--test-periods", default=1, type=int)
+    _add_portfolio_args(report)
+    _add_neutralize_args(report)
+
+    portfolio = subparsers.add_parser(
+        "evaluate-portfolio-ranking",
+        help="JPX-style long-short spread evaluation (Sharpe-like, turnover, "
+        "drawdown, optional transaction cost); research-only, no trading signals",
+    )
+    _add_modeling_input_args(portfolio)
+    _add_portfolio_args(portfolio)
+    portfolio.add_argument(
+        "--horizon", default=20, type=int, help="forward-return horizon to evaluate"
+    )
+    portfolio.add_argument(
+        "--periods-per-year",
+        default=None,
+        type=int,
+        help="if given, also report an annualized Sharpe-like score",
+    )
+
+    neutralized = subparsers.add_parser(
+        "evaluate-neutralized-ranking",
+        help="Numerai-style neutralized Rank IC + exposure diagnostics "
+        "(research-only; not official Numerai scoring)",
+    )
+    _add_modeling_input_args(neutralized)
+    _add_neutralize_args(neutralized)
+    neutralized.add_argument(
+        "--horizon", default=20, type=int, help="forward-return horizon to evaluate"
+    )
     return parser
+
+
+def _add_portfolio_args(sub: argparse.ArgumentParser) -> None:
+    sub.add_argument(
+        "--portfolio-mode",
+        default="quantile",
+        choices=["quantile", "count"],
+        help="select legs by quantile (default) or fixed count",
+    )
+    sub.add_argument("--portfolio-top-n", default=1, type=int)
+    sub.add_argument("--portfolio-bottom-n", default=1, type=int)
+    sub.add_argument("--portfolio-top-quantile", default=0.2, type=float)
+    sub.add_argument("--portfolio-bottom-quantile", default=0.2, type=float)
+    sub.add_argument(
+        "--portfolio-rank-weighted",
+        action="store_true",
+        help="rank-weight each leg (top long / bottom short get larger weights)",
+    )
+    sub.add_argument(
+        "--transaction-cost-bps",
+        default=0.0,
+        type=float,
+        help="simplified turnover-based cost in bps (default 0; research approximation)",
+    )
+
+
+def _add_neutralize_args(sub: argparse.ArgumentParser) -> None:
+    sub.add_argument(
+        "--neutralize-exposures",
+        default="momentum_60d,leverage",
+        help="comma-separated factor exposure columns to neutralize against "
+        "(sector dummies are always added). Default: momentum_60d,leverage",
+    )
+    sub.add_argument(
+        "--neutralize-proportion",
+        default=1.0,
+        type=float,
+        help="neutralization strength 0..1 (default 1.0 = full)",
+    )
 
 
 def _parse_horizons(raw: str) -> list[int]:
@@ -843,6 +922,12 @@ def _run_modeling_report(args: argparse.Namespace) -> int:
             walk_forward_mode=args.mode,
             min_train_periods=args.min_train_periods,
             test_periods=args.test_periods,
+            portfolio_top_quantile=args.portfolio_top_quantile,
+            portfolio_bottom_quantile=args.portfolio_bottom_quantile,
+            portfolio_rank_weighted=args.portfolio_rank_weighted,
+            transaction_cost_bps=args.transaction_cost_bps,
+            neutralize_factors=_parse_exposures(args.neutralize_exposures),
+            neutralize_proportion=args.neutralize_proportion,
         )
         paths = write_modeling_report_outputs(report, args.output_dir)
     except (ValueError, JPStockAnalysisError, OSError) as exc:
@@ -850,6 +935,90 @@ def _run_modeling_report(args: argparse.Namespace) -> int:
         return 1
     print(f"Modeling report written to: {paths['json_path'].parent}")
     return 0
+
+
+def _parse_exposures(raw: str) -> list[str]:
+    return [token.strip() for token in raw.split(",") if token.strip()]
+
+
+def _run_evaluate_portfolio_ranking(args: argparse.Namespace) -> int:
+    try:
+        dataset, _prices, _disclosure = _load_modeling_dataset(args)
+        scores = score_baseline(dataset)
+        scored = [s for s in scored_observations(dataset, scores) if s.score is not None]
+        report = evaluate_portfolio(
+            observations_from_scored(scored, args.horizon),
+            horizon=args.horizon,
+            model_label="baseline_factor_ranker",
+            is_synthetic=dataset.is_synthetic,
+            mode=args.portfolio_mode,
+            top_n=args.portfolio_top_n,
+            bottom_n=args.portfolio_bottom_n,
+            top_quantile=args.portfolio_top_quantile,
+            bottom_quantile=args.portfolio_bottom_quantile,
+            rank_weighted=args.portfolio_rank_weighted,
+            transaction_cost_bps=args.transaction_cost_bps,
+            periods_per_year=args.periods_per_year,
+        )
+        paths = write_portfolio_outputs(report, args.output_dir)
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Long-short evaluation status={report.status}, "
+        f"Sharpe-like={report.series.sharpe_like}. Written to: {paths['json_path'].parent}"
+    )
+    return 0
+
+
+def _run_evaluate_neutralized_ranking(args: argparse.Namespace) -> int:
+    try:
+        dataset, _prices, _disclosure = _load_modeling_dataset(args)
+        scores = score_baseline(dataset)
+        scored = [s for s in scored_observations(dataset, scores) if s.score is not None]
+        exposure_obs, exposure_columns = _build_exposure_observations(
+            dataset, scored, args.horizon, _parse_exposures(args.neutralize_exposures)
+        )
+        report = neutralized_rank_ic(
+            exposure_obs,
+            horizon=args.horizon,
+            exposure_columns=exposure_columns,
+            proportion=args.neutralize_proportion,
+            is_synthetic=dataset.is_synthetic,
+        )
+        paths = write_neutralized_outputs(report, args.output_dir)
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Neutralized rank IC status={report.status}, "
+        f"mean={report.ic_mean}. Written to: {paths['json_path'].parent}"
+    )
+    return 0
+
+
+def _build_exposure_observations(dataset, scored, horizon, factor_columns):
+    """CLI helper: build neutralization inputs (factor columns + sector dummies)."""
+    features_by_key = {(o.ticker, o.decision_date): o.features for o in dataset.included()}
+    sectors = sorted({o.sector for o in scored if o.sector})
+    label_key = f"forward_return_h{horizon}"
+    obs = []
+    for s in scored:
+        features = features_by_key.get((s.ticker, s.decision_date), {})
+        exposures = {col: features.get(col) for col in factor_columns}
+        for sector in sectors:
+            exposures[f"sector::{sector}"] = 1.0 if s.sector == sector else 0.0
+        obs.append(
+            ExposureObservation(
+                decision_date=s.decision_date,
+                ticker=s.ticker,
+                prediction=s.score,
+                forward_return=s.labels.get(label_key),
+                exposures=exposures,
+                sector=s.sector,
+            )
+        )
+    return obs, [*factor_columns, *(f"sector::{s}" for s in sectors)]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -873,6 +1042,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_train_ranking_model(args)
     if args.command == "modeling-report":
         return _run_modeling_report(args)
+    if args.command == "evaluate-portfolio-ranking":
+        return _run_evaluate_portfolio_ranking(args)
+    if args.command == "evaluate-neutralized-ranking":
+        return _run_evaluate_neutralized_ranking(args)
     if args.command != "analyze":
         return 2
     if args.provider == "local" and not args.prices:

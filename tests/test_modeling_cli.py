@@ -86,6 +86,50 @@ def test_modeling_report_synthetic(tmp_path):
     assert "SYNTHETIC" in (out / "modeling_report.md").read_text(encoding="utf-8")
 
 
+def test_evaluate_portfolio_ranking_synthetic(tmp_path):
+    out = tmp_path / "port"
+    rc = main(
+        [
+            "evaluate-portfolio-ranking",
+            "--synthetic",
+            "--horizon",
+            "20",
+            "--portfolio-rank-weighted",
+            "--transaction-cost-bps",
+            "10",
+            "--output-dir",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads((out / "portfolio_metrics.json").read_text(encoding="utf-8"))
+    assert payload["research_only"] is True
+    assert payload["is_synthetic"] is True
+    assert payload["transaction_cost"]["transaction_cost_bps"] == 10.0
+    assert (out / "portfolio_metrics.csv").exists()
+
+
+def test_evaluate_neutralized_ranking_synthetic(tmp_path):
+    out = tmp_path / "neut"
+    rc = main(
+        [
+            "evaluate-neutralized-ranking",
+            "--synthetic",
+            "--horizon",
+            "20",
+            "--neutralize-exposures",
+            "momentum_60d,leverage",
+            "--output-dir",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads((out / "neutralized_metrics.json").read_text(encoding="utf-8"))
+    assert payload["research_only"] is True
+    assert "neutralized_ic_mean" in payload
+    assert "exposure_diagnostics" in payload
+
+
 def test_file_inputs_require_decision_dates(tmp_path, capsys):
     out = tmp_path / "err"
     rc = main(

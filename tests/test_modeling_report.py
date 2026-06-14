@@ -39,6 +39,9 @@ def test_report_has_all_required_sections():
         "walk_forward",
         "optional_backends",
         "model_comparison",
+        "portfolio_long_short",
+        "neutralized_rank_metrics",
+        "mmc_style",
         "no_look_ahead_status",
         "limitations",
     ):
@@ -82,6 +85,27 @@ def test_report_outputs_written_and_marked_synthetic(tmp_path):
     assert "SYNTHETIC FIXTURE RESULTS" in md
     assert "No-look-ahead status" in md
     assert "Limitations" in md
+    assert "JPX-style long-short spread evaluation" in md
+    assert "Numerai-style neutralized rank metrics" in md
+    assert "MMC-style contribution delta" in md
+
+
+def test_report_portfolio_and_neutralized_sections_populated():
+    b, ds = _bundle_and_dataset()
+    payload = build_modeling_report(
+        ds, b.prices, bundle_disclosure_date=b.bundle_disclosure_date, transaction_cost_bps=10.0
+    ).to_dict()
+    # one portfolio summary per horizon
+    assert set(payload["portfolio_long_short"]) == {str(h) for h in ds.horizons}
+    for summary in payload["portfolio_long_short"].values():
+        assert "sharpe_like" in summary and "average_turnover" in summary
+        assert "net_mean_spread" in summary  # transaction cost was enabled
+    neutral = payload["neutralized_rank_metrics"]
+    assert neutral is not None
+    assert "neutralized_ic_mean" in neutral
+    assert "exposure_diagnostics" in neutral
+    # MMC-style needs >=2 trained models; absent optional backends -> None
+    assert payload["mmc_style"] is None or "contribution_delta" in payload["mmc_style"]
 
 
 def test_no_look_ahead_status_is_eligible_for_synthetic_bundle():
