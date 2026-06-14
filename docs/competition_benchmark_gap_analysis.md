@@ -199,12 +199,12 @@ validation?" flags whether the gap prevents a credible real comparison.
 | item | status |
 | --- | --- |
 | baseline factor ranker | DONE |
-| linear / ridge / elastic-net | NOT STARTED |
+| linear / ridge / elastic-net | **DONE (infra)** — Ridge + real coordinate-descent Elastic Net (`linear_models.py`, P3) |
 | LightGBM/CatBoost ranker+regressor | PARTIAL (adapters exist; untrained on real data; optional deps absent) |
-| ensemble / stacking / blending | NOT STARTED |
+| ensemble / stacking / blending | **DONE (infra)** — rank-average + weighted blend (`ensemble.py`, P3); stacking NOT STARTED |
 | neural nets / transformers | NOT STARTED (correctly deferred until real time-series exists) |
-| model diversity / seed stability | NOT STARTED |
-| rank optimization / target neutralization | NOT STARTED |
+| model diversity / seed stability | **DONE (infra)** — `stability.py` + diversity diagnostics (P3) |
+| rank optimization / target neutralization | **PARTIAL** — neutralization DONE (P2); explicit rank-objective optimization NOT STARTED |
 
 ### 5.4 Validation
 | item | status |
@@ -231,7 +231,7 @@ validation?" flags whether the gap prevents a credible real comparison.
 | artifact tracking (JSON/CSV/MD) | DONE |
 | config management | PARTIAL (CLI args; no config file/versioned run manifest) |
 | model versioning | PARTIAL (`model_version` string only) |
-| feature importance / explainability | NOT STARTED |
+| feature importance / explainability | **DONE (infra)** — coefficient + permutation importance (`feature_importance.py`, P3); explanatory, not causal |
 | risk warnings / limitations | DONE |
 | audit logs | NOT STARTED |
 | API / UI readiness | NOT STARTED (CLI only; out of scope per CLAUDE.md) |
@@ -295,15 +295,23 @@ fixture metrics are not evidence.
 - **Still pending:** real exposures (size/value/market) and ≥2 trained models on
   real data — blocked by P0 and optional-backend installation.
 
-### P3 — Model improvements *(partially now; GBDT-on-real waits for P0)*
-- **Repo:** engine. **Files:** `modeling/ml_models.py`, new linear adapter,
-  `modeling/ensemble.py`.
-- **Outline:** add **ridge/elastic-net** baseline; LightGBM/CatBoost **group-by
-  decision_date** ranking (adapters already structured for it); **blend/ensemble**
-  + **seed-stability** harness; **feature importance** export. Train on real data
-  only after P0.
-- **Test plan:** optional-dep skip preserved; ensemble of identical inputs is
-  deterministic; importance sums sanely.
+### P3 — Model diversity / stability / explainability — ✅ IMPLEMENTED (2026-06-14)
+- **Status:** done as offline, synthetic-tested research infrastructure (GBDT
+  training on *real* data still waits for P0).
+- **Files:** `modeling/linear_models.py` (deterministic **Ridge** + a **real
+  coordinate-descent Elastic Net** with L1 soft-thresholding — not a placeholder,
+  not sklearn), `modeling/ensemble.py` (rank-average + weighted blend + diversity),
+  `modeling/stability.py` (walk-forward + seed stability), `modeling/feature_importance.py`
+  (coefficient + permutation), `report.py`, `cli.py`, four new test modules,
+  `docs/model_diversity.md`.
+- **Delivered:** Elastic Net objective `1/(2n)||y−Xβ||² + alpha·l1_ratio·||β||₁
+  + 0.5·alpha·(1−l1_ratio)||β||²` with convergence tracking and non-converged
+  status; ensembles compatible with Rank IC / portfolio / neutralization; fold
+  and seed stability; explanatory (non-causal) feature importance. CLI
+  `train-linear-ranking-model` + `evaluate-model-stability` and a report section.
+  LightGBM/CatBoost remain optional with clean skip.
+- **Still pending:** trained-model results on **real** data, plus optional GBDT
+  comparison — blocked by P0 and optional-backend installation.
 
 ### P4 — Commercial validation *(after P0/P1)*
 - **Repo:** engine. **Files:** `modeling/portfolio_metrics.py` (extend),

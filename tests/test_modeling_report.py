@@ -42,6 +42,7 @@ def test_report_has_all_required_sections():
         "portfolio_long_short",
         "neutralized_rank_metrics",
         "mmc_style",
+        "model_diversity",
         "no_look_ahead_status",
         "limitations",
     ):
@@ -88,6 +89,22 @@ def test_report_outputs_written_and_marked_synthetic(tmp_path):
     assert "JPX-style long-short spread evaluation" in md
     assert "Numerai-style neutralized rank metrics" in md
     assert "MMC-style contribution delta" in md
+    assert "Model diversity, stability & explainability" in md
+
+
+def test_report_model_diversity_section_populated():
+    b, ds = _bundle_and_dataset()
+    md = build_modeling_report(
+        ds, b.prices, bundle_disclosure_date=b.bundle_disclosure_date
+    ).to_dict()["model_diversity"]
+    assert md["linear_models"]["ridge"]["status"] == "fitted"
+    en = md["linear_models"]["elastic_net"]
+    assert en["status"] in ("fitted", "not_converged")
+    assert "converged" in en and "sparsity" in en
+    assert set(md["ensemble"]) == {"rank_average", "weighted_blend"}
+    assert "rank_ic" in md["stability"]["fold_stability"]
+    assert md["feature_importance"]["coefficient"]["method"] == "coefficient"
+    assert md["feature_importance"]["permutation"]["method"] == "permutation"
 
 
 def test_report_portfolio_and_neutralized_sections_populated():

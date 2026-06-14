@@ -109,6 +109,77 @@ def test_evaluate_portfolio_ranking_synthetic(tmp_path):
     assert (out / "portfolio_metrics.csv").exists()
 
 
+def test_train_linear_ranking_model_ridge(tmp_path):
+    out = tmp_path / "ridge"
+    rc = main(
+        [
+            "train-linear-ranking-model",
+            "--synthetic",
+            "--linear-model-type",
+            "ridge",
+            "--horizon",
+            "20",
+            "--output-dir",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    meta = json.loads((out / "model_metadata.json").read_text(encoding="utf-8"))
+    assert meta["model_version"] == "ridge_v1"
+    assert meta["status"] == "fitted"
+    assert (out / "coefficients.csv").exists()
+    assert (out / "predictions.csv").exists()
+
+
+def test_train_linear_ranking_model_elastic_net_with_importance(tmp_path):
+    out = tmp_path / "en"
+    rc = main(
+        [
+            "train-linear-ranking-model",
+            "--synthetic",
+            "--linear-model-type",
+            "elastic_net",
+            "--horizon",
+            "20",
+            "--alpha",
+            "0.05",
+            "--l1-ratio",
+            "0.5",
+            "--feature-importance",
+            "--output-dir",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    meta = json.loads((out / "model_metadata.json").read_text(encoding="utf-8"))
+    assert meta["model_version"] == "elastic_net_coordinate_descent_v1"
+    assert "objective_history" in meta and "converged" in meta
+    imp = json.loads((out / "feature_importance.json").read_text(encoding="utf-8"))
+    assert "coefficient" in imp and "permutation" in imp
+
+
+def test_evaluate_model_stability_synthetic(tmp_path):
+    out = tmp_path / "stab"
+    rc = main(
+        [
+            "evaluate-model-stability",
+            "--synthetic",
+            "--horizon",
+            "20",
+            "--seed-count",
+            "4",
+            "--output-dir",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads((out / "model_stability.json").read_text(encoding="utf-8"))
+    assert payload["research_only"] is True
+    assert "rank_ic" in payload["fold_stability"]
+    assert payload["seed_stability"] is not None
+    assert (out / "model_stability.csv").exists()
+
+
 def test_evaluate_neutralized_ranking_synthetic(tmp_path):
     out = tmp_path / "neut"
     rc = main(

@@ -22,7 +22,14 @@ from pathlib import Path
 from typing import Any
 
 from jp_stock_analysis.modeling.baseline_ranker import score_baseline, scored_observations
-from jp_stock_analysis.modeling.dataset import ModelingDataset
+from jp_stock_analysis.modeling.dataset import ModelingDataset, ModelingObservation
+from jp_stock_analysis.modeling.ensemble import rank_average_ensemble, weighted_blend
+from jp_stock_analysis.modeling.factors import ALL_FACTORS
+from jp_stock_analysis.modeling.feature_importance import (
+    coefficient_importance,
+    permutation_importance,
+)
+from jp_stock_analysis.modeling.linear_models import ElasticNetRanker, RidgeRanker
 from jp_stock_analysis.modeling.ml_models import (
     MODEL_BASELINE,
     MODEL_TYPES,
@@ -47,6 +54,11 @@ from jp_stock_analysis.modeling.ranking_metrics import (
     RankingReport,
     ScoredObservation,
     evaluate_ranking,
+)
+from jp_stock_analysis.modeling.stability import (
+    build_stability_report,
+    compute_fold_metrics,
+    synthetic_seed_ic,
 )
 from jp_stock_analysis.modeling.walk_forward import (
     MODE_EXPANDING,
@@ -104,6 +116,7 @@ class ModelingReport:
     portfolio_by_horizon: dict[str, PortfolioReport]
     neutralized: NeutralizedICReport | None
     mmc_style: MMCStyleReport | None
+    model_diversity: dict[str, Any]
     disclaimer: str = RESEARCH_DISCLAIMER
 
     def to_dict(self) -> dict[str, Any]:
@@ -149,6 +162,7 @@ class ModelingReport:
                 self.neutralized.to_dict() if self.neutralized is not None else None
             ),
             "mmc_style": (self.mmc_style.to_dict() if self.mmc_style is not None else None),
+            "model_diversity": self.model_diversity,
             "no_look_ahead_status": self.readiness,
             "limitations": list(LIMITATIONS),
         }
@@ -220,6 +234,143 @@ def _exposure_observations(
             )
         )
     return out, [*factor_columns, *sector_cols]
+
+
+def _train_linear(
+    observations: Sequence[ModelingObservation], horizon: int, model
+) -> tuple[Any, list[ScoredObservation]]:
+    """Fit a linear ranker on the labelled observations; return (model, scored)."""
+    label_key = f"forward_return_h{horizon}"
+    labelled = [o for o in observations if o.labels.get(label_key) is not None]
+    labelled.sort(key=lambda o: (o.decision_date, o.ticker))
+    matrix = [[o.features.get(f) for f in ALL_FACTORS] for o in labelled]
+    target = [float(o.labels[label_key]) for o in labelled]  # type: ignore[arg-type]
+    model.fit(matrix, target, list(ALL_FACTORS))
+    predictions = model.predict(matrix) if labelled else []
+    scored = [
+        ScoredObservation(
+            decision_date=o.decision_date,
+            ticker=o.ticker,
+            score=float(predictions[i]),
+            sector=o.sector,
+            labels=o.labels,
+        )
+        for i, o in enumerate(labelled)
+    ]
+    return model, scored
+
+
+def build_model_diversity(
+    dataset: ModelingDataset,
+    baseline_scored: Sequence[ScoredObservation],
+    *,
+    horizon: int,
+    n_quantiles: int,
+) -> dict[str, Any]:
+    """Linear baselines, ensemble/blend, stability, and feature importance.
+
+    Synthetic-only integration path: trains a Ridge and a real Elastic Net on the
+    in-memory dataset, ensembles them with the baseline, summarises walk-forward
+    stability, and reports feature importance. Research diagnostics only.
+    """
+    included = dataset.included()
+    ridge, ridge_scored = _train_linear(included, horizon, RidgeRanker(alpha=1.0))
+    elastic, elastic_scored = _train_linear(
+        included, horizon, ElasticNetRanker(alpha=0.05, l1_ratio=0.5, max_iter=2000)
+    )
+
+    predictions = {
+        "baseline": list(baseline_scored),
+        "ridge": ridge_scored,
+        "elastic_net": elastic_scored,
+    }
+    ensemble = rank_average_ensemble(predictions, is_synthetic=dataset.is_synthetic)
+    blend = weighted_blend(
+        predictions,
+        {"baseline": 1.0, "ridge": 1.0, "elastic_net": 1.0},
+        is_synthetic=dataset.is_synthetic,
+    )
+    ensemble_ic = (
+        evaluate_ranking(
+            ensemble.scored, [horizon], model_label="rank_average_ensemble",
+            is_synthetic=dataset.is_synthetic, n_quantiles=n_quantiles,
+        ).horizons[0].ic_mean
+        if ensemble.scored
+        else None
+    )
+    blend_ic = (
+        evaluate_ranking(
+            blend.scored, [horizon], model_label="weighted_blend",
+            is_synthetic=dataset.is_synthetic, n_quantiles=n_quantiles,
+        ).horizons[0].ic_mean
+        if blend.scored
+        else None
+    )
+
+    plan = build_walk_forward_plan(dataset.decision_dates, horizons=[horizon])
+    fold_metrics = compute_fold_metrics(baseline_scored, plan.folds, horizon=horizon)
+    seed_ic = synthetic_seed_ic(baseline_scored, horizon=horizon, seeds=[0, 1, 2, 3])
+    stability = build_stability_report(
+        fold_metrics, horizon=horizon, is_synthetic=dataset.is_synthetic, seed_ic=seed_ic
+    )
+
+    coef_importance = coefficient_importance(
+        elastic.model_metadata["scaled_coefficients"], is_synthetic=dataset.is_synthetic
+    )
+    label_key = f"forward_return_h{horizon}"
+    labelled = sorted(
+        (o for o in included if o.labels.get(label_key) is not None),
+        key=lambda o: (o.decision_date, o.ticker),
+    )
+    perm = permutation_importance(
+        elastic,
+        [[o.features.get(f) for f in ALL_FACTORS] for o in labelled],
+        list(ALL_FACTORS),
+        [o.decision_date for o in labelled],
+        [o.labels[label_key] for o in labelled],
+        seed=0,
+        is_synthetic=dataset.is_synthetic,
+    )
+
+    return {
+        "horizon": horizon,
+        "linear_models": {
+            "ridge": _linear_summary(ridge),
+            "elastic_net": _linear_summary(elastic),
+        },
+        "ensemble": {
+            "rank_average": {**ensemble.to_dict(), "ic_mean": ensemble_ic},
+            "weighted_blend": {**blend.to_dict(), "ic_mean": blend_ic},
+        },
+        "stability": stability.to_dict(),
+        "feature_importance": {
+            "coefficient": coef_importance.to_dict(),
+            "permutation": perm.to_dict(),
+        },
+        "limitations": [
+            "Linear/ensemble/stability/importance are research diagnostics only.",
+            "Elastic Net is a real coordinate-descent L1/L2 model; sparsity is not "
+            "proof of alpha.",
+            "Feature importance is explanatory, not causal.",
+        ],
+    }
+
+
+def _linear_summary(model) -> dict[str, Any]:
+    meta = model.model_metadata
+    return {
+        "model_version": meta["model_version"],
+        "status": meta["status"],
+        "intercept": meta["intercept"],
+        "coefficients": meta["coefficients"],
+        "scaled_coefficients": meta["scaled_coefficients"],
+        "sparsity": meta["sparsity"],
+        "selected_features": meta["selected_features"],
+        "n_iter": meta.get("n_iter"),
+        "converged": meta.get("converged"),
+        "final_objective": meta.get("final_objective"),
+        "warnings": meta["warnings"],
+    }
 
 
 def build_modeling_report(
@@ -298,6 +449,10 @@ def build_modeling_report(
         dataset, baseline_scored, primary_horizon, n_quantiles
     )
 
+    model_diversity = build_model_diversity(
+        dataset, baseline_scored, horizon=primary_horizon, n_quantiles=n_quantiles
+    )
+
     tickers = sorted({o.ticker for o in dataset.included()}) or sorted(
         {o.ticker for o in dataset.observations}
     )
@@ -316,6 +471,7 @@ def build_modeling_report(
         portfolio_by_horizon=portfolio_by_horizon,
         neutralized=neutralized,
         mmc_style=mmc_style,
+        model_diversity=model_diversity,
     )
 
 
@@ -416,6 +572,12 @@ def write_modeling_report_outputs(
 
 def _fmt(value: float | None) -> str:
     return "—" if value is None else f"{value:.4f}"
+
+
+def _top_coefs(linear_summary: dict[str, Any], n: int = 3) -> list[tuple[str, float]]:
+    coefs = linear_summary.get("scaled_coefficients", {})
+    ranked = sorted(coefs.items(), key=lambda kv: (-abs(kv[1]), kv[0]))
+    return [(name, round(float(value), 4)) for name, value in ranked[:n]]
 
 
 def _markdown(report: ModelingReport) -> str:
@@ -536,6 +698,42 @@ def _markdown(report: ModelingReport) -> str:
             f"- status {mmc['status']}, contribution delta "
             f"**{_fmt(mmc['contribution_delta'])}**, delta vs base {_fmt(mmc['delta_vs_base'])}"
         )
+    lines.append("")
+
+    md = data["model_diversity"]
+    lines += ["## Model diversity, stability & explainability", ""]
+    lines.append(
+        "Research diagnostics only. Elastic Net is a real coordinate-descent L1/L2 "
+        "model; feature importance is explanatory, not causal."
+    )
+    lines.append("")
+    rid = md["linear_models"]["ridge"]
+    en = md["linear_models"]["elastic_net"]
+    lines.append(f"- Ridge: status {rid['status']}, top {_top_coefs(rid)}")
+    lines.append(
+        f"- Elastic Net: status {en['status']}, converged {en['converged']} "
+        f"(n_iter {en['n_iter']}), sparsity {_fmt(en['sparsity'])}, "
+        f"selected {en['selected_features']}"
+    )
+    ra = md["ensemble"]["rank_average"]
+    wb = md["ensemble"]["weighted_blend"]
+    lines.append(
+        f"- Ensemble (rank-average) models {ra['model_names']}: IC {_fmt(ra['ic_mean'])}, "
+        f"diversity {_fmt(ra['diversity_score'])}"
+    )
+    lines.append(f"- Weighted blend: IC {_fmt(wb['ic_mean'])} (status {wb['status']})")
+    lines.append(f"- Pairwise prediction corr: {ra['pairwise_correlations']}")
+    rank_ic_stab = md["stability"]["fold_stability"].get("rank_ic", {})
+    lines.append(
+        f"- Stability (Rank IC across {md['stability']['n_folds']} folds): "
+        f"mean {_fmt(rank_ic_stab.get('mean'))}, std {_fmt(rank_ic_stab.get('std'))}, "
+        f"positive rate {_fmt(rank_ic_stab.get('positive_period_rate'))}"
+    )
+    perm_rows = md["feature_importance"]["permutation"]["rows"][:3]
+    lines.append(
+        "- Top permutation importance: "
+        + ", ".join(f"{r['feature']}={_fmt(r['importance'])}" for r in perm_rows)
+    )
     lines.append("")
 
     lines += ["## No-look-ahead status", ""]

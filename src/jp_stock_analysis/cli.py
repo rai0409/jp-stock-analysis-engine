@@ -51,7 +51,13 @@ from jp_stock_analysis.config import AnalysisConfig
 from jp_stock_analysis.errors import JPStockAnalysisError, ProviderError
 from jp_stock_analysis.modeling.baseline_ranker import score_baseline, scored_observations
 from jp_stock_analysis.modeling.dataset import build_modeling_dataset, write_dataset_outputs
+from jp_stock_analysis.modeling.factors import ALL_FACTORS
+from jp_stock_analysis.modeling.feature_importance import (
+    coefficient_importance,
+    permutation_importance,
+)
 from jp_stock_analysis.modeling.fixtures import build_synthetic_bundle
+from jp_stock_analysis.modeling.linear_models import ElasticNetRanker, RidgeRanker
 from jp_stock_analysis.modeling.ml_models import MODEL_TYPES, train_ranking_model
 from jp_stock_analysis.modeling.neutralization import (
     ExposureObservation,
@@ -67,6 +73,12 @@ from jp_stock_analysis.modeling.ranking_metrics import evaluate_ranking, write_r
 from jp_stock_analysis.modeling.report import (
     build_modeling_report,
     write_modeling_report_outputs,
+)
+from jp_stock_analysis.modeling.stability import (
+    build_stability_report,
+    compute_fold_metrics,
+    synthetic_seed_ic,
+    write_stability_outputs,
 )
 from jp_stock_analysis.modeling.walk_forward import (
     MODE_EXPANDING,
@@ -561,6 +573,39 @@ def build_parser() -> argparse.ArgumentParser:
     neutralized.add_argument(
         "--horizon", default=20, type=int, help="forward-return horizon to evaluate"
     )
+
+    linear = subparsers.add_parser(
+        "train-linear-ranking-model",
+        help="train a deterministic Ridge or real coordinate-descent Elastic Net "
+        "ranker on the modeling dataset; research-only, no trading signals",
+    )
+    _add_modeling_input_args(linear)
+    linear.add_argument(
+        "--linear-model-type", default="ridge", choices=["ridge", "elastic_net"]
+    )
+    linear.add_argument("--horizon", default=20, type=int, help="training label horizon")
+    linear.add_argument("--alpha", default=1.0, type=float)
+    linear.add_argument(
+        "--l1-ratio", default=0.5, type=float, help="Elastic Net L1 fraction in [0,1]"
+    )
+    linear.add_argument("--max-iter", default=1000, type=int)
+    linear.add_argument("--tol", default=1e-6, type=float)
+    linear.add_argument(
+        "--feature-importance",
+        action="store_true",
+        help="also write coefficient + permutation feature importance",
+    )
+
+    stability = subparsers.add_parser(
+        "evaluate-model-stability",
+        help="walk-forward + seed stability of the baseline ranker "
+        "(research diagnostics only)",
+    )
+    _add_modeling_input_args(stability)
+    stability.add_argument("--horizon", default=20, type=int)
+    stability.add_argument(
+        "--seed-count", default=4, type=int, help="synthetic seed-noise probe count"
+    )
     return parser
 
 
@@ -997,6 +1042,110 @@ def _run_evaluate_neutralized_ranking(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_train_linear_ranking_model(args: argparse.Namespace) -> int:
+    try:
+        dataset, _prices, _disclosure = _load_modeling_dataset(args)
+        label_key = f"forward_return_h{args.horizon}"
+        labelled = sorted(
+            (o for o in dataset.included() if o.labels.get(label_key) is not None),
+            key=lambda o: (o.decision_date, o.ticker),
+        )
+        if not labelled:
+            raise ValueError(f"no labelled observations at horizon {args.horizon}")
+        matrix = [[o.features.get(f) for f in ALL_FACTORS] for o in labelled]
+        target = [float(o.labels[label_key]) for o in labelled]
+        if args.linear_model_type == "ridge":
+            model = RidgeRanker(alpha=args.alpha)
+        else:
+            model = ElasticNetRanker(
+                alpha=args.alpha, l1_ratio=args.l1_ratio, max_iter=args.max_iter, tol=args.tol
+            )
+        predictions = model.fit_predict(matrix, target, list(ALL_FACTORS))
+
+        out_dir = Path(args.output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        import csv as _csv
+        import json as _json
+
+        (out_dir / "model_metadata.json").write_text(
+            _json.dumps(model.model_metadata, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        with (out_dir / "coefficients.csv").open("w", encoding="utf-8", newline="") as handle:
+            writer = _csv.writer(handle, lineterminator="\n")
+            writer.writerow(["feature", "coefficient", "scaled_coefficient"])
+            scaled = model.model_metadata["scaled_coefficients"]
+            for feature, coef in model.coefficients.items():
+                writer.writerow([feature, f"{coef:.8f}", f"{scaled.get(feature, 0.0):.8f}"])
+        with (out_dir / "predictions.csv").open("w", encoding="utf-8", newline="") as handle:
+            writer = _csv.writer(handle, lineterminator="\n")
+            writer.writerow(["ticker", "decision_date", "prediction", "forward_return"])
+            for obs, pred in zip(labelled, predictions, strict=True):
+                writer.writerow(
+                    [
+                        obs.ticker,
+                        obs.decision_date.isoformat(),
+                        f"{pred:.8f}",
+                        obs.labels[label_key],
+                    ]
+                )
+
+        if args.feature_importance:
+            coef_imp = coefficient_importance(
+                model.model_metadata["scaled_coefficients"], is_synthetic=dataset.is_synthetic
+            )
+            perm = permutation_importance(
+                model,
+                matrix,
+                list(ALL_FACTORS),
+                [o.decision_date for o in labelled],
+                [o.labels[label_key] for o in labelled],
+                seed=0,
+                is_synthetic=dataset.is_synthetic,
+            )
+            (out_dir / "feature_importance.json").write_text(
+                _json.dumps(
+                    {"coefficient": coef_imp.to_dict(), "permutation": perm.to_dict()},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Trained {args.linear_model_type}: status={model.status}. "
+        f"Written to: {args.output_dir}"
+    )
+    return 0
+
+
+def _run_evaluate_model_stability(args: argparse.Namespace) -> int:
+    try:
+        dataset, _prices, _disclosure = _load_modeling_dataset(args)
+        scores = score_baseline(dataset)
+        scored = [s for s in scored_observations(dataset, scores) if s.score is not None]
+        plan = build_walk_forward_plan(dataset.decision_dates, horizons=[args.horizon])
+        fold_metrics = compute_fold_metrics(scored, plan.folds, horizon=args.horizon)
+        seed_ic = synthetic_seed_ic(
+            scored, horizon=args.horizon, seeds=list(range(max(1, args.seed_count)))
+        )
+        report = build_stability_report(
+            fold_metrics,
+            horizon=args.horizon,
+            is_synthetic=dataset.is_synthetic,
+            seed_ic=seed_ic,
+        )
+        paths = write_stability_outputs(report, args.output_dir)
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Model stability written to: {paths['json_path'].parent}")
+    return 0
+
+
 def _build_exposure_observations(dataset, scored, horizon, factor_columns):
     """CLI helper: build neutralization inputs (factor columns + sector dummies)."""
     features_by_key = {(o.ticker, o.decision_date): o.features for o in dataset.included()}
@@ -1046,6 +1195,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_evaluate_portfolio_ranking(args)
     if args.command == "evaluate-neutralized-ranking":
         return _run_evaluate_neutralized_ranking(args)
+    if args.command == "train-linear-ranking-model":
+        return _run_train_linear_ranking_model(args)
+    if args.command == "evaluate-model-stability":
+        return _run_evaluate_model_stability(args)
     if args.command != "analyze":
         return 2
     if args.provider == "local" and not args.prices:
