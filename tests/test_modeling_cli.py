@@ -431,6 +431,116 @@ def test_promote_pipeline_baseline_with_approval_updates(tmp_path):
     assert record["reviewer_note"] == "approved reference"
 
 
+def test_show_baseline_history_writes_outputs(tmp_path):
+    out = tmp_path / "hist"
+    rc = main(
+        [
+            "show-baseline-history",
+            "--ledger-path",
+            "tests/fixtures/pipeline_baseline/baseline_history.jsonl",
+            "--output-dir",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    summary = json.loads((out / "baseline_history.json").read_text(encoding="utf-8"))
+    assert summary["chain_status"] == "valid"
+    assert summary["entry_count"] == 1
+    assert (out / "baseline_history.md").exists()
+
+
+def test_verify_baseline_lineage_passes_on_valid_fixture(tmp_path):
+    out = tmp_path / "ver"
+    rc = main(
+        [
+            "verify-baseline-lineage",
+            "--ledger-path",
+            "tests/fixtures/pipeline_baseline/baseline_history.jsonl",
+            "--fail-on-invalid",
+            "--output-dir",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    report = json.loads(
+        (out / "baseline_lineage_verification.json").read_text(encoding="utf-8")
+    )
+    assert report["status"] == "valid"
+
+
+def test_verify_baseline_lineage_fails_on_tampered_ledger(tmp_path):
+    import shutil
+
+    ledger = tmp_path / "ledger.jsonl"
+    shutil.copy("tests/fixtures/pipeline_baseline/baseline_history.jsonl", ledger)
+    entries = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
+    entries[0]["reviewer_note"] = "TAMPERED"
+    ledger.write_text("\n".join(json.dumps(e, sort_keys=True) for e in entries) + "\n")
+    rc = main(
+        ["verify-baseline-lineage", "--ledger-path", str(ledger), "--fail-on-invalid"]
+    )
+    assert rc == 2  # tampering detected -> nonzero
+
+
+def test_promote_with_ledger_appends_on_approval(tmp_path):
+    import shutil
+
+    from jp_stock_analysis.modeling.baseline_history import load_ledger
+    from jp_stock_analysis.modeling.regression_baseline import run_golden_synthetic_pipeline
+
+    a = run_golden_synthetic_pipeline(tmp_path / "a")
+    ledger = tmp_path / "ledger.jsonl"
+    shutil.copy("tests/fixtures/pipeline_baseline/baseline_history.jsonl", ledger)
+    rc = main(
+        [
+            "promote-pipeline-baseline",
+            "--from-run",
+            str(a),
+            "--baseline-path",
+            str(tmp_path / "b.json"),
+            "--reviewer-note",
+            "ledger append",
+            "--require-approval",
+            "--approve",
+            "--ledger-path",
+            str(ledger),
+            "--output-dir",
+            str(tmp_path / "out"),
+        ]
+    )
+    assert rc == 0
+    assert len(load_ledger(ledger)) == 2  # genesis + appended
+
+
+def test_promote_without_approval_does_not_append(tmp_path):
+    import shutil
+
+    from jp_stock_analysis.modeling.baseline_history import load_ledger
+    from jp_stock_analysis.modeling.regression_baseline import run_golden_synthetic_pipeline
+
+    a = run_golden_synthetic_pipeline(tmp_path / "a")
+    ledger = tmp_path / "ledger.jsonl"
+    shutil.copy("tests/fixtures/pipeline_baseline/baseline_history.jsonl", ledger)
+    rc = main(
+        [
+            "promote-pipeline-baseline",
+            "--from-run",
+            str(a),
+            "--baseline-path",
+            str(tmp_path / "b.json"),
+            "--reviewer-note",
+            "no approval",
+            "--require-approval",
+            "--ledger-path",
+            str(ledger),
+            "--output-dir",
+            str(tmp_path / "out"),
+        ]
+    )
+    assert rc == 2  # blocked
+    assert len(load_ledger(ledger)) == 1  # unchanged genesis only
+
+
 def test_evaluate_neutralized_ranking_synthetic(tmp_path):
     out = tmp_path / "neut"
     rc = main(

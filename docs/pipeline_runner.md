@@ -95,7 +95,10 @@ are reproducibility checks, not model-validity checks. To diff two arbitrary run
 (A vs B) or to explicitly promote a new approved baseline with a provenance
 record, see `compare-pipeline-runs` / `promote-pipeline-baseline` in
 `docs/run_comparison.md` — metric deltas there are descriptive only (never
-better/worse) and a promotion is an approved reference, not an improvement.
+better/worse) and a promotion is an approved reference, not an improvement. Every
+approved promotion can append a tamper-evident entry to the hash-chained
+**baseline history ledger** (`show-baseline-history` / `verify-baseline-lineage`;
+see `docs/baseline_history.md`).
 
 ## Recommended real-data run order
 

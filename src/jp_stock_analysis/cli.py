@@ -56,6 +56,12 @@ from jp_stock_analysis.modeling.audit import (
     project_version,
     write_audit_manifest_outputs,
 )
+from jp_stock_analysis.modeling.baseline_history import (
+    summarize_baseline_history,
+    verify_baseline_history,
+    write_history_outputs,
+    write_verification_outputs,
+)
 from jp_stock_analysis.modeling.baseline_ranker import score_baseline, scored_observations
 from jp_stock_analysis.modeling.constraints import (
     ConstraintConfig,
@@ -801,6 +807,35 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="prior baseline for the metric-delta comparison (defaults to --baseline-path)",
     )
+    promote.add_argument(
+        "--ledger-path",
+        default=None,
+        help="append a hash-chained promotion entry to this append-only ledger "
+        "(only on an approved promotion; a broken chain blocks the promotion)",
+    )
+
+    history = subparsers.add_parser(
+        "show-baseline-history",
+        help="print the baseline promotion lineage from the hash-chained ledger "
+        "(research-only; audit trail, not a performance claim)",
+    )
+    history.add_argument(
+        "--ledger-path",
+        default="tests/fixtures/pipeline_baseline/baseline_history.jsonl",
+    )
+    history.add_argument("--output-dir", default=None)
+
+    lineage = subparsers.add_parser(
+        "verify-baseline-lineage",
+        help="verify the baseline-history hash chain is intact (detects silent "
+        "edits / broken parents / out-of-order entries); research-only",
+    )
+    lineage.add_argument(
+        "--ledger-path",
+        default="tests/fixtures/pipeline_baseline/baseline_history.jsonl",
+    )
+    lineage.add_argument("--output-dir", default=None)
+    lineage.add_argument("--fail-on-invalid", action="store_true")
     return parser
 
 
@@ -1680,18 +1715,24 @@ def _run_promote_pipeline_baseline(args: argparse.Namespace) -> int:
             previous_baseline_path=args.previous_baseline_path,
             run_id=args.run_id,
             fixed_timestamp=args.fixed_timestamp,
+            ledger_path=args.ledger_path,
         )
         paths = write_promotion_record_outputs(record, args.output_dir)
     except (ValueError, JPStockAnalysisError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    ledger_note = (
+        f" Ledger: {record['ledger_append_status']}"
+        if record.get("ledger_append_status")
+        else ""
+    )
     if updated:
         print(
             f"warning: baseline INTENTIONALLY updated at {args.baseline_path} "
             f"(reviewer note recorded). Record: {paths['json_path']}",
             file=sys.stderr,
         )
-        print(f"Baseline promoted. Record: {paths['json_path']}")
+        print(f"Baseline promoted.{ledger_note} Record: {paths['json_path']}")
         return 0
     print(
         f"Promotion BLOCKED ({record['status']}); baseline NOT updated. "
@@ -1699,6 +1740,45 @@ def _run_promote_pipeline_baseline(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
     return 2
+
+
+def _run_show_baseline_history(args: argparse.Namespace) -> int:
+    try:
+        summary = summarize_baseline_history(args.ledger_path)
+        if args.output_dir:
+            write_history_outputs(summary, args.output_dir)
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Baseline history: {summary['entry_count']} entries, chain "
+        f"{summary['chain_status'].upper()}."
+    )
+    for row in summary["entries"]:
+        print(
+            f"  #{row['entry_index']} {row['entry_hash_short']} "
+            f"(parent {row['parent_hash_short']}) — {row['reviewer_note'] or '—'}"
+        )
+    return 0
+
+
+def _run_verify_baseline_lineage(args: argparse.Namespace) -> int:
+    try:
+        report = verify_baseline_history(args.ledger_path)
+        if args.output_dir:
+            write_verification_outputs(report, args.output_dir)
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Baseline lineage: {report['status'].upper()} "
+        f"({report['entry_count']} entries, {len(report['issues'])} issue(s))."
+    )
+    for issue in report["issues"]:
+        print(f"  - {issue}", file=sys.stderr)
+    if args.fail_on_invalid and report["status"] != "valid":
+        return 2
+    return 0
 
 
 def _load_metrics_csv(path: str, period_column: str):
@@ -1788,6 +1868,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_compare_pipeline_runs(args)
     if args.command == "promote-pipeline-baseline":
         return _run_promote_pipeline_baseline(args)
+    if args.command == "show-baseline-history":
+        return _run_show_baseline_history(args)
+    if args.command == "verify-baseline-lineage":
+        return _run_verify_baseline_lineage(args)
     if args.command != "analyze":
         return 2
     if args.provider == "local" and not args.prices:

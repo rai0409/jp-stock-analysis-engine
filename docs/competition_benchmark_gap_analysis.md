@@ -226,7 +226,7 @@ validation?" flags whether the gap prevents a credible real comparison.
 | item | status |
 | --- | --- |
 | disclaimers / research-only | DONE (every report) |
-| reproducibility / determinism | **DONE (infra)** — `run-modeling-pipeline` + `verify-pipeline-determinism` (two runs byte-identical) + `check-pipeline-regression` golden baseline + `compare-pipeline-runs` / `promote-pipeline-baseline` (neutral run diff + audited promotion) (`pipeline.py` / `determinism.py` / `regression_baseline.py` / `run_compare.py`) |
+| reproducibility / determinism | **DONE (infra)** — `run-modeling-pipeline` + `verify-pipeline-determinism` (byte-identical) + `check-pipeline-regression` golden baseline + `compare-pipeline-runs` / `promote-pipeline-baseline` (neutral diff + audited promotion) + `show-baseline-history` / `verify-baseline-lineage` (append-only hash-chained ledger) (`pipeline.py` / `determinism.py` / `regression_baseline.py` / `run_compare.py` / `baseline_history.py`) |
 | synthetic-vs-real labeling | DONE |
 | artifact tracking (JSON/CSV/MD) | DONE |
 | config management | PARTIAL (CLI args; no config file/versioned run manifest) |

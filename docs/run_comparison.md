@@ -85,6 +85,9 @@ review and commit them deliberately.
 - **Regression baseline** (`check-pipeline-regression`): a fresh run vs the committed golden baseline.
 - **Run comparison** (`compare-pipeline-runs`): any two runs A vs B, neutral deltas.
 - **Promotion** (`promote-pipeline-baseline`): explicitly bless a run as the new reference, with provenance.
+- **History ledger** (`show-baseline-history` / `verify-baseline-lineage`): an
+  append-only, hash-chained record of every promotion (see `docs/baseline_history.md`).
+  Pass `promote-pipeline-baseline --ledger-path …` to append on an approved promotion.
 
-All four are reproducibility / change-detection tools — none is a model-validity or
-performance check.
+All are reproducibility / change-detection / auditability tools — none is a
+model-validity or performance check.

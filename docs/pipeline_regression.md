@@ -95,7 +95,10 @@ approved reference, see `docs/run_comparison.md`:
   report (descriptive only, never better/worse).
 - `promote-pipeline-baseline --from-run … --reviewer-note … --require-approval
   --approve` — explicit, auditable baseline update with a provenance record.
-  Promotion is an *approved reference*, not a model improvement.
+  Promotion is an *approved reference*, not a model improvement. Add
+  `--ledger-path …` to append a tamper-evident entry to the **hash-chained
+  baseline history ledger** (`show-baseline-history` / `verify-baseline-lineage`;
+  see `docs/baseline_history.md`).
 
 ## Real-data note
 

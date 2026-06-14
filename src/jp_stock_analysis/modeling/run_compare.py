@@ -65,6 +65,7 @@ STATUS_UNREADABLE_ARTIFACTS = "unreadable_artifacts"
 
 PROMOTION_BLOCKED_APPROVAL = "blocked_approval_required"
 PROMOTION_BLOCKED_NOTE = "blocked_reviewer_note_required"
+PROMOTION_BLOCKED_LEDGER = "blocked_broken_ledger"
 PROMOTION_PROMOTED = "promoted"
 
 
@@ -318,11 +319,16 @@ def promote_pipeline_baseline(
     run_id: str = GOLDEN_RUN_ID,
     fixed_timestamp: str | None = None,
     is_synthetic: bool = True,
+    ledger_path: str | Path | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Promote a run to the approved golden baseline. Never promotes silently.
 
     Returns ``(promotion_record, updated)``. The baseline file is written only
-    when approval (and a reviewer note, unless disabled) is supplied.
+    when approval (and a reviewer note, unless disabled) is supplied. When
+    ``ledger_path`` is given, the existing chain is verified *before* any write
+    (a broken chain blocks the whole promotion, so the baseline is never updated
+    without a recordable ledger entry), and a hash-chained entry is appended on
+    a successful promotion.
     """
     from_dir = Path(from_run)
     warnings: list[str] = []
@@ -360,6 +366,27 @@ def promote_pipeline_baseline(
         blocked_reason = PROMOTION_BLOCKED_NOTE
         warnings.append("reviewer note required but empty: baseline NOT updated")
 
+    # Verify the ledger chain BEFORE any write, so we never end up with a promoted
+    # baseline but an un-appendable (broken) ledger.
+    if blocked_reason is None and ledger_path is not None:
+        from jp_stock_analysis.modeling.baseline_history import (
+            STATUS_VALID,
+            load_ledger,
+            verify_baseline_history,
+        )
+
+        try:
+            existing = load_ledger(ledger_path)
+        except ValueError:
+            existing = None
+        if existing is None or (
+            existing and verify_baseline_history(existing)["status"] != STATUS_VALID
+        ):
+            blocked_reason = PROMOTION_BLOCKED_LEDGER
+            warnings.append(
+                "ledger chain is broken/unreadable: promotion blocked, baseline NOT updated"
+            )
+
     updated = blocked_reason is None
     if updated:
         write_baseline(new_baseline, baseline_path)
@@ -388,7 +415,22 @@ def promote_pipeline_baseline(
         "config": scrub_secrets(
             {"from_run": Path(from_run).name, "baseline_path": Path(baseline_path).name}
         ),
+        "ledger_path": Path(ledger_path).name if ledger_path is not None else None,
+        "ledger_append_status": None,
+        "appended_entry_hash": None,
     }
+
+    # Append a hash-chained ledger entry only on a successful promotion.
+    if updated and ledger_path is not None:
+        from jp_stock_analysis.modeling.baseline_history import (
+            append_baseline_history_entry,
+        )
+
+        entry, append_status = append_baseline_history_entry(
+            ledger_path, record, created_at_utc=fixed_timestamp
+        )
+        record["ledger_append_status"] = append_status
+        record["appended_entry_hash"] = entry["entry_hash"] if entry else None
     return record, updated
 
 

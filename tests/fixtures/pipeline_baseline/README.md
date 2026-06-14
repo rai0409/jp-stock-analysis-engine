@@ -19,3 +19,13 @@ canonical synthetic config). It is the blessed reference used by
 Regenerate only intentionally, with review, via
 `check-pipeline-regression --synthetic --update-baseline` (see
 `docs/pipeline_regression.md`).
+
+## `baseline_history.jsonl` (append-only ledger)
+
+A **hash-chained, append-only** ledger of baseline promotions (see
+`docs/baseline_history.md`). It seeds one deterministic **genesis** entry
+(`parent_hash = GENESIS`, `entry_index = 0`) whose `new_baseline_fingerprint`
+corresponds to the committed golden baseline. Every `promote-pipeline-baseline
+--ledger-path …` appends one entry chained to the previous; `verify-baseline-lineage`
+detects any silent edit. **SYNTHETIC ONLY — not market evidence.** It carries no
+absolute paths, no secrets, and only a canonical fixed timestamp.
