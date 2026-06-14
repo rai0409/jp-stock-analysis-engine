@@ -180,6 +180,62 @@ def test_evaluate_model_stability_synthetic(tmp_path):
     assert (out / "model_stability.csv").exists()
 
 
+def test_evaluate_portfolio_constraints_synthetic(tmp_path):
+    out = tmp_path / "con"
+    rc = main(
+        [
+            "evaluate-portfolio-constraints",
+            "--synthetic",
+            "--horizon",
+            "20",
+            "--max-weight-per-name",
+            "0.34",
+            "--max-sector-weight",
+            "0.6",
+            "--output-dir",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads((out / "constrained_portfolio.json").read_text(encoding="utf-8"))
+    assert payload["constraints"]["research_only"] is True
+    assert (out / "constrained_portfolio.csv").exists()
+
+
+def test_build_audit_manifest_synthetic_deterministic(tmp_path):
+    out1 = tmp_path / "a1"
+    out2 = tmp_path / "a2"
+    args = [
+        "build-audit-manifest",
+        "--synthetic",
+        "--input",
+        "tests/fixtures/modeling/fundamentals.csv",
+        "--run-id",
+        "run_fixed",
+        "--fixed-timestamp",
+        "1970-01-01T00:00:00Z",
+    ]
+    assert main([*args, "--output-dir", str(out1)]) == 0
+    assert main([*args, "--output-dir", str(out2)]) == 0
+    m1 = json.loads((out1 / "audit_manifest.json").read_text(encoding="utf-8"))
+    m2 = json.loads((out2 / "audit_manifest.json").read_text(encoding="utf-8"))
+    # identical except the git_commit which reflects the live repo (still equal here)
+    assert m1["run_id"] == "run_fixed"
+    assert m1["input_fingerprints"] == m2["input_fingerprints"]
+    assert "SECRET" not in json.dumps(m1)
+
+
+def test_evaluate_model_monitoring_synthetic(tmp_path):
+    out = tmp_path / "mon"
+    rc = main(
+        ["evaluate-model-monitoring", "--synthetic", "--horizon", "20", "--output-dir", str(out)]
+    )
+    assert rc == 0
+    payload = json.loads((out / "monitoring.json").read_text(encoding="utf-8"))
+    assert payload["research_only"] is True
+    assert "long_short_spread" in payload["metrics"]
+
+
 def test_evaluate_neutralized_ranking_synthetic(tmp_path):
     out = tmp_path / "neut"
     rc = main(

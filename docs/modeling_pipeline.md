@@ -43,6 +43,9 @@ point-in-time fundamentals/prices arrive, validation can run immediately.
 | `modeling/ensemble.py` | rank-average / weighted-blend ensembles + diversity diagnostics |
 | `modeling/stability.py` | walk-forward / seed stability summaries |
 | `modeling/feature_importance.py` | coefficient + permutation feature importance |
+| `modeling/constraints.py` | position/liquidity/sector/turnover feasibility constraints (see `docs/commercial_validation.md`) |
+| `modeling/audit.py` | deterministic reproducibility manifest (secret-scrubbed) |
+| `modeling/monitoring.py` | drift / stability monitoring across decision dates |
 | `modeling/report.py` | full offline modeling report |
 | `modeling/fixtures.py` | deterministic synthetic bundle (SYNTHETIC ONLY) |
 
@@ -72,6 +75,9 @@ python -m jp_stock_analysis.cli evaluate-portfolio-ranking   --synthetic --horiz
 python -m jp_stock_analysis.cli evaluate-neutralized-ranking --synthetic --horizon 20 --output-dir out/
 python -m jp_stock_analysis.cli train-linear-ranking-model   --synthetic --linear-model-type elastic_net --horizon 20 --feature-importance --output-dir out/
 python -m jp_stock_analysis.cli evaluate-model-stability      --synthetic --horizon 20 --output-dir out/
+python -m jp_stock_analysis.cli evaluate-portfolio-constraints --synthetic --horizon 20 --max-weight-per-name 0.34 --output-dir out/
+python -m jp_stock_analysis.cli build-audit-manifest         --synthetic --input fundamentals.csv --output-dir out/
+python -m jp_stock_analysis.cli evaluate-model-monitoring     --synthetic --horizon 20 --output-dir out/
 python -m jp_stock_analysis.cli modeling-report          --synthetic --output-dir out/
 ```
 
@@ -106,6 +112,11 @@ python -m jp_stock_analysis.cli modeling-report \
 5c. **train linear baselines** — `train-linear-ranking-model` (ridge / Elastic
    Net) and **evaluate stability** — `evaluate-model-stability`
    (research diagnostics; see `docs/model_diversity.md`).
+5d. **apply constraints & cost/liquidity checks** —
+   `evaluate-portfolio-constraints` (real ADV required for liquidity to be
+   meaningful) and **monitor drift** — `evaluate-model-monitoring`
+   (see `docs/commercial_validation.md`).
+5e. **generate audit manifest** — `build-audit-manifest` (reproducibility).
 6. **optionally train LightGBM/CatBoost** — `train-ranking-model` (install the
    `lightgbm` / `catboost` / `all-modeling` extras first).
 7. **compare against baseline** — the report's model-comparison table.

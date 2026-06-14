@@ -16,6 +16,7 @@ from jp_stock_analysis.modeling.portfolio_metrics import (
     compute_turnover,
     evaluate_portfolio,
     summarize_spread_series,
+    universe_excess_returns,
     write_portfolio_outputs,
 )
 
@@ -135,6 +136,64 @@ def test_invalid_arguments_raise():
         evaluate_portfolio(_monotone(), horizon=5, mode="bogus")
     with pytest.raises(ValueError):
         evaluate_portfolio(_monotone(), horizon=5, transaction_cost_bps=-1.0)
+
+
+def test_universe_excess_returns_sum_to_zero_cross_sectionally():
+    obs = []
+    for d in DATES:
+        for i in range(5):
+            obs.append(_obs(d, f"t{i}", float(i), float(i) * 2 + 1.0, sector="a"))
+    excess = universe_excess_returns(obs)
+    for _d, names in excess.items():
+        assert round(sum(e for _t, e in names), 9) == 0.0  # mean-removed
+
+
+def test_commercial_validation_sections_present():
+    report = evaluate_portfolio(
+        _monotone(), horizon=5, top_quantile=0.34, bottom_quantile=0.34, transaction_cost_bps=20.0
+    )
+    cv = report.to_dict()["commercial_validation"]
+    assert cv["status"] == STATUS_OK
+    assert cv["benchmark_relative"]["sector_available"] is False  # _monotone has no sector
+    assert "concentration" in cv and "exposure" in cv
+
+
+def test_sector_relative_excess_when_sector_present():
+    obs = []
+    for d in DATES:
+        for i in range(6):
+            sector = "a" if i < 3 else "b"
+            obs.append(_obs(d, f"t{i}", float(i), float(i) * SLOPES[d], sector=sector))
+    cv = evaluate_portfolio(
+        obs, horizon=5, top_quantile=0.34, bottom_quantile=0.34
+    ).to_dict()["commercial_validation"]
+    assert cv["benchmark_relative"]["sector_available"] is True
+    assert cv["benchmark_relative"]["long_excess_over_sector_mean"] is not None
+    assert cv["exposure"]["long_sector_exposure"]  # populated
+
+
+def test_cost_decomposition_reduces_net_when_turnover_positive():
+    obs = []
+    for j, d in enumerate(DATES):
+        for i in range(6):
+            score = float(i if j % 2 == 0 else 5 - i)
+            obs.append(_obs(d, f"t{i}", score, float(i) + j))
+    cv = evaluate_portfolio(
+        obs, horizon=5, top_quantile=0.34, bottom_quantile=0.34, transaction_cost_bps=50.0
+    ).to_dict()["commercial_validation"]
+    cost = cv["cost_decomposition"]
+    assert cost["net_mean_spread"] < cost["gross_mean_spread"]
+    assert cost["liquidity_cost_available"] is False  # no liquidity data -> omitted
+
+
+def test_concentration_and_equity_curves_deterministic():
+    r1 = evaluate_portfolio(_monotone(), horizon=5, top_quantile=0.34, bottom_quantile=0.34)
+    r2 = evaluate_portfolio(_monotone(), horizon=5, top_quantile=0.34, bottom_quantile=0.34)
+    c1 = r1.to_dict()["commercial_validation"]
+    c2 = r2.to_dict()["commercial_validation"]
+    assert c1 == c2  # deterministic
+    assert c1["concentration"]["effective_n_long"] is not None
+    assert c1["cost_decomposition"]["cumulative_gross"]  # equity curve present
 
 
 def test_outputs_written_and_synthetic_labelled(tmp_path):

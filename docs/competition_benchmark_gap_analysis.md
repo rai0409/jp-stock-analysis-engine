@@ -216,7 +216,7 @@ validation?" flags whether the gap prevents a credible real comparison.
 | Rank IC / ICIR / quantile spread / hit rate | DONE |
 | Sharpe-like **long-short spread** (mean/std of strategy return) | **DONE (infra)** — `portfolio_metrics.py` (P1); real number still blocked by P0 |
 | decile/quintile spread | DONE |
-| drawdown / transaction cost / liquidity / turnover | **PARTIAL** — drawdown + turnover + simplified cost DONE; liquidity/cap NOT STARTED |
+| drawdown / transaction cost / liquidity / turnover | **DONE (infra)** — drawdown + turnover + simplified cost + position/sector/liquidity constraints (`constraints.py`, P4); real ADV still required |
 | sector-neutral evaluation | DONE (sector-neutral IC) |
 | feature/model stability | NOT STARTED |
 | out-of-time holdout | PARTIAL (walk-forward folds; no dedicated final holdout) |
@@ -233,7 +233,7 @@ validation?" flags whether the gap prevents a credible real comparison.
 | model versioning | PARTIAL (`model_version` string only) |
 | feature importance / explainability | **DONE (infra)** — coefficient + permutation importance (`feature_importance.py`, P3); explanatory, not causal |
 | risk warnings / limitations | DONE |
-| audit logs | NOT STARTED |
+| audit logs | **DONE (infra)** — deterministic, secret-scrubbed audit manifest (`audit.py`, P4) |
 | API / UI readiness | NOT STARTED (CLI only; out of scope per CLAUDE.md) |
 
 ---
@@ -313,13 +313,24 @@ fixture metrics are not evidence.
 - **Still pending:** trained-model results on **real** data, plus optional GBDT
   comparison — blocked by P0 and optional-backend installation.
 
-### P4 — Commercial validation *(after P0/P1)*
-- **Repo:** engine. **Files:** `modeling/portfolio_metrics.py` (extend),
-  `report.py`.
-- **Outline:** **transaction-cost + turnover** drag, **liquidity/cap constraints**,
-  **benchmark-relative** returns, **drift/stability monitoring**, audit manifest.
-- **Test plan:** cost monotonically reduces net spread; constraints reduce
-  universe deterministically.
+### P4 — Commercial validation / audit — ✅ IMPLEMENTED (2026-06-14)
+- **Status:** done as offline, synthetic-tested research infrastructure (real
+  liquidity/ADV and any commercial-readiness claim still gated on real data / P0).
+- **Files:** `modeling/constraints.py` (position/liquidity/sector/turnover
+  feasibility), `modeling/portfolio_metrics.py` (benchmark-relative returns, cost
+  & exposure decomposition, concentration), `modeling/audit.py` (deterministic,
+  secret-scrubbed reproducibility manifest), `modeling/monitoring.py` (drift
+  bands), `report.py`, `cli.py`, four new test modules, `docs/commercial_validation.md`.
+- **Delivered:** constraints reduce/never-increase exposure and flag infeasible;
+  ADV missing → `liquidity_data_missing` (never fabricated); cost decomposition
+  reduces net spread on turnover; benchmark/sector-relative excess; Herfindahl /
+  effective-N concentration; deterministic audit manifest (stable run_id, input
+  fingerprints, secret scrubbing); drift z-score flagging with degenerate
+  handling. CLI `evaluate-portfolio-constraints`, `build-audit-manifest`,
+  `evaluate-model-monitoring` and a report section. Optional LightGBM/CatBoost
+  skip preserved.
+- **Still pending:** real ADV/liquidity data, and any commercial-readiness or
+  performance claim — blocked by P0. **This is infrastructure, not proof.**
 
 ---
 

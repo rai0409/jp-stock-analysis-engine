@@ -43,6 +43,7 @@ def test_report_has_all_required_sections():
         "neutralized_rank_metrics",
         "mmc_style",
         "model_diversity",
+        "commercial_validation",
         "no_look_ahead_status",
         "limitations",
     ):
@@ -90,6 +91,19 @@ def test_report_outputs_written_and_marked_synthetic(tmp_path):
     assert "Numerai-style neutralized rank metrics" in md
     assert "MMC-style contribution delta" in md
     assert "Model diversity, stability & explainability" in md
+    assert "Commercial validation (research diagnostics)" in md
+
+
+def test_report_commercial_validation_section_populated():
+    b, ds = _bundle_and_dataset()
+    cv = build_modeling_report(
+        ds, b.prices, bundle_disclosure_date=b.bundle_disclosure_date
+    ).to_dict()["commercial_validation"]
+    assert cv["constraints"]["status"] in ("ok", "feasible_reduced", "no_valid_dates")
+    assert cv["constraints"]["liquidity_adv_available"] is False  # synthetic has no ADV
+    assert cv["portfolio_commercial"]["status"] == "ok"
+    assert set(cv["monitoring"]["metrics"]) == {"long_short_spread", "rank_ic", "turnover"}
+    assert cv["audit_manifest_stub"]["synthetic_vs_real"] == "synthetic"
 
 
 def test_report_model_diversity_section_populated():

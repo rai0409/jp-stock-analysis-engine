@@ -426,6 +426,201 @@ def apply_transaction_cost(
     )
 
 
+def universe_excess_returns(
+    observations: Sequence[PortfolioObservation],
+) -> dict[date, list[tuple[str, float]]]:
+    """Per decision date, each name's forward return minus the universe mean.
+
+    Cross-sectionally these excess returns sum to ~0 by construction — a
+    benchmark-relative (market-neutral) framing for research diagnostics.
+    """
+    by_date: dict[date, list[PortfolioObservation]] = {}
+    for obs in observations:
+        if obs.forward_return is not None:
+            by_date.setdefault(obs.decision_date, []).append(obs)
+    out: dict[date, list[tuple[str, float]]] = {}
+    for d, group in by_date.items():
+        mean = sum(float(o.forward_return) for o in group) / len(group)  # type: ignore[arg-type]
+        out[d] = [(o.ticker, float(o.forward_return) - mean) for o in group]  # type: ignore[arg-type]
+    return out
+
+
+def _hhi(weights: Mapping[str, float]) -> float | None:
+    return sum(w * w for w in weights.values()) if weights else None
+
+
+def compute_commercial_validation(
+    by_date: Mapping[date, Sequence[PortfolioObservation]],
+    per_date: Sequence[DateSpread],
+    turnover: TurnoverSummary,
+    *,
+    transaction_cost_bps: float,
+) -> dict[str, Any]:
+    """Benchmark-relative returns, cost & exposure decomposition, concentration.
+
+    Research diagnostics only. Liquidity cost is reported as unavailable unless
+    real liquidity data is supplied upstream (never fabricated).
+    """
+    ok = sorted(
+        (s for s in per_date if s.status == STATUS_OK and s.spread_return is not None),
+        key=lambda s: s.decision_date,
+    )
+    if not ok:
+        return {"status": STATUS_NO_VALID_DATES}
+
+    turnover_by_date = {row["decision_date"]: row["total_turnover"] for row in turnover.per_date}
+    bench_rows: list[dict[str, Any]] = []
+    cost_rows: list[dict[str, Any]] = []
+    long_excess_u: list[float] = []
+    short_excess_u: list[float] = []
+    long_excess_s: list[float] = []
+    gross_series: list[float] = []
+    net_series: list[float] = []
+    cumulative_gross: list[dict[str, Any]] = []
+    cumulative_net: list[dict[str, Any]] = []
+    long_sector_acc: dict[str, float] = {}
+    short_sector_acc: dict[str, float] = {}
+    hhi_long: list[float] = []
+    hhi_short: list[float] = []
+    top_long: list[float] = []
+    top_short: list[float] = []
+    universe_means: list[float] = []
+    any_sector = False
+    cum_gross = 1.0
+    cum_net = 1.0
+
+    for spread in ok:
+        usable = [
+            o
+            for o in by_date[spread.decision_date]
+            if o.score is not None and o.forward_return is not None
+        ]
+        sector_of = {o.ticker: o.sector for o in usable}
+        if any(o.sector for o in usable):
+            any_sector = True
+        universe_mean = sum(float(o.forward_return) for o in usable) / len(usable)
+        universe_means.append(universe_mean)
+        sec_sum: dict[str, float] = {}
+        sec_cnt: dict[str, int] = {}
+        for o in usable:
+            if o.sector:
+                sec_sum[o.sector] = sec_sum.get(o.sector, 0.0) + float(o.forward_return)
+                sec_cnt[o.sector] = sec_cnt.get(o.sector, 0) + 1
+        sec_mean = {k: sec_sum[k] / sec_cnt[k] for k in sec_sum}
+
+        le_u = float(spread.long_leg_return) - universe_mean  # type: ignore[arg-type]
+        se_u = float(spread.short_leg_return) - universe_mean  # type: ignore[arg-type]
+        long_bench = sum(
+            w * sec_mean.get(sector_of.get(t) or "", universe_mean)
+            for t, w in spread.long_weights.items()
+        )
+        le_s = float(spread.long_leg_return) - long_bench  # type: ignore[arg-type]
+        long_excess_u.append(le_u)
+        short_excess_u.append(se_u)
+        long_excess_s.append(le_s)
+        bench_rows.append(
+            {
+                "decision_date": spread.decision_date.isoformat(),
+                "universe_mean_return": universe_mean,
+                "long_excess_over_universe": le_u,
+                "short_excess_over_universe": se_u,
+                "long_short_spread": spread.spread_return,
+                "long_excess_over_sector": le_s if any_sector else None,
+            }
+        )
+
+        for t, w in spread.long_weights.items():
+            sec = sector_of.get(t) or "unknown"
+            long_sector_acc[sec] = long_sector_acc.get(sec, 0.0) + w
+        for t, w in spread.short_weights.items():
+            sec = sector_of.get(t) or "unknown"
+            short_sector_acc[sec] = short_sector_acc.get(sec, 0.0) + w
+        if spread.long_weights:
+            hhi_long.append(_hhi(spread.long_weights))  # type: ignore[arg-type]
+            top_long.append(max(spread.long_weights.values()))
+        if spread.short_weights:
+            hhi_short.append(_hhi(spread.short_weights))  # type: ignore[arg-type]
+            top_short.append(max(spread.short_weights.values()))
+
+        turn = turnover_by_date.get(spread.decision_date.isoformat(), 0.0)
+        turnover_cost = turn * transaction_cost_bps / 100.0
+        gross = float(spread.spread_return)
+        net = gross - turnover_cost  # liquidity cost unavailable -> excluded
+        gross_series.append(gross)
+        net_series.append(net)
+        cost_rows.append(
+            {
+                "decision_date": spread.decision_date.isoformat(),
+                "gross_spread_return": gross,
+                "turnover_cost": turnover_cost,
+                "liquidity_cost": None,
+                "net_spread_return": net,
+            }
+        )
+        cum_gross *= 1.0 + gross / 100.0
+        cum_net *= 1.0 + net / 100.0
+        cumulative_gross.append(
+            {"decision_date": spread.decision_date.isoformat(), "equity": cum_gross}
+        )
+        cumulative_net.append(
+            {"decision_date": spread.decision_date.isoformat(), "equity": cum_net}
+        )
+
+    n = len(ok)
+    long_sector_exposure = {k: long_sector_acc[k] / n for k in sorted(long_sector_acc)}
+    short_sector_exposure = {k: short_sector_acc[k] / n for k in sorted(short_sector_acc)}
+    net_sector_exposure = {
+        k: long_sector_exposure.get(k, 0.0) - short_sector_exposure.get(k, 0.0)
+        for k in sorted(set(long_sector_exposure) | set(short_sector_exposure))
+    }
+    hhi_long_mean = _mean(hhi_long)
+    hhi_short_mean = _mean(hhi_short)
+    return {
+        "status": STATUS_OK,
+        "benchmark_relative": {
+            "universe_mean_return_mean": _mean(universe_means),
+            "long_excess_over_universe_mean": _mean(long_excess_u),
+            "short_excess_over_universe_mean": _mean(short_excess_u),
+            "long_short_spread_mean": _mean(gross_series),
+            "long_excess_over_sector_mean": _mean(long_excess_s) if any_sector else None,
+            "benchmark_relative_sharpe_like": (
+                _mean(long_excess_u) / _std(long_excess_u)
+                if (_mean(long_excess_u) is not None and _std(long_excess_u) not in (None, 0.0))
+                else None
+            ),
+            "sector_available": any_sector,
+            "per_date": bench_rows,
+        },
+        "cost_decomposition": {
+            "gross_mean_spread": _mean(gross_series),
+            "turnover_cost_mean": _mean([r["turnover_cost"] for r in cost_rows]),
+            "liquidity_cost_available": False,
+            "net_mean_spread": _mean(net_series),
+            "cumulative_gross": cumulative_gross,
+            "cumulative_net": cumulative_net,
+            "per_date": cost_rows,
+            "note": (
+                "SIMPLIFIED research approximation, NOT execution simulation. "
+                "Liquidity cost requires real liquidity data and is omitted here."
+            ),
+        },
+        "exposure": {
+            "sector_available": any_sector,
+            "long_sector_exposure": long_sector_exposure,
+            "short_sector_exposure": short_sector_exposure,
+            "net_sector_exposure": net_sector_exposure,
+        },
+        "concentration": {
+            "herfindahl_long_mean": hhi_long_mean,
+            "herfindahl_short_mean": hhi_short_mean,
+            "effective_n_long": (1.0 / hhi_long_mean) if hhi_long_mean else None,
+            "effective_n_short": (1.0 / hhi_short_mean) if hhi_short_mean else None,
+            "top_weight_long_mean": _mean(top_long),
+            "top_weight_short_mean": _mean(top_short),
+        },
+    }
+
+
 @dataclass(frozen=True)
 class PortfolioReport:
     model_label: str
@@ -436,6 +631,7 @@ class PortfolioReport:
     series: SpreadSeriesSummary
     turnover: TurnoverSummary
     transaction_cost: TransactionCostSummary | None
+    commercial: dict[str, Any] | None = None
     disclaimer: str = RESEARCH_DISCLAIMER
 
     @property
@@ -465,6 +661,7 @@ class PortfolioReport:
             "transaction_cost": (
                 self.transaction_cost.to_dict() if self.transaction_cost else None
             ),
+            "commercial_validation": self.commercial,
             "per_date": [s.to_dict() for s in self.per_date],
         }
 
@@ -513,6 +710,9 @@ def evaluate_portfolio(
         if transaction_cost_bps > 0
         else None
     )
+    commercial = compute_commercial_validation(
+        by_date, per_date, turnover, transaction_cost_bps=transaction_cost_bps
+    )
     config = {
         "mode": mode,
         "weighting": WEIGHT_RANK if rank_weighted else WEIGHT_EQUAL,
@@ -532,6 +732,7 @@ def evaluate_portfolio(
         series=series,
         turnover=turnover,
         transaction_cost=cost_summary,
+        commercial=commercial,
     )
 
 
@@ -634,11 +835,13 @@ __all__ = [
     "TransactionCostSummary",
     "TurnoverSummary",
     "apply_transaction_cost",
+    "compute_commercial_validation",
     "compute_turnover",
     "evaluate_date_spread",
     "evaluate_portfolio",
     "observations_from_scored",
     "portfolio_markdown",
     "summarize_spread_series",
+    "universe_excess_returns",
     "write_portfolio_outputs",
 ]

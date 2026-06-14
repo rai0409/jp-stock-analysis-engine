@@ -21,7 +21,13 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from jp_stock_analysis.modeling.audit import build_audit_manifest
 from jp_stock_analysis.modeling.baseline_ranker import score_baseline, scored_observations
+from jp_stock_analysis.modeling.constraints import (
+    ConstraintConfig,
+    PositionBook,
+    apply_constraints,
+)
 from jp_stock_analysis.modeling.dataset import ModelingDataset, ModelingObservation
 from jp_stock_analysis.modeling.ensemble import rank_average_ensemble, weighted_blend
 from jp_stock_analysis.modeling.factors import ALL_FACTORS
@@ -36,6 +42,7 @@ from jp_stock_analysis.modeling.ml_models import (
     available_backends,
     train_ranking_model,
 )
+from jp_stock_analysis.modeling.monitoring import build_monitoring_report
 from jp_stock_analysis.modeling.neutralization import (
     ExposureObservation,
     MMCStyleObservation,
@@ -43,6 +50,9 @@ from jp_stock_analysis.modeling.neutralization import (
     NeutralizedICReport,
     mmc_style_contribution,
     neutralized_rank_ic,
+)
+from jp_stock_analysis.modeling.portfolio_metrics import (
+    STATUS_OK as PORTFOLIO_STATUS_OK,
 )
 from jp_stock_analysis.modeling.portfolio_metrics import (
     PortfolioReport,
@@ -54,6 +64,7 @@ from jp_stock_analysis.modeling.ranking_metrics import (
     RankingReport,
     ScoredObservation,
     evaluate_ranking,
+    spearman,
 )
 from jp_stock_analysis.modeling.stability import (
     build_stability_report,
@@ -117,6 +128,7 @@ class ModelingReport:
     neutralized: NeutralizedICReport | None
     mmc_style: MMCStyleReport | None
     model_diversity: dict[str, Any]
+    commercial_validation: dict[str, Any]
     disclaimer: str = RESEARCH_DISCLAIMER
 
     def to_dict(self) -> dict[str, Any]:
@@ -163,6 +175,7 @@ class ModelingReport:
             ),
             "mmc_style": (self.mmc_style.to_dict() if self.mmc_style is not None else None),
             "model_diversity": self.model_diversity,
+            "commercial_validation": self.commercial_validation,
             "no_look_ahead_status": self.readiness,
             "limitations": list(LIMITATIONS),
         }
@@ -373,6 +386,114 @@ def _linear_summary(model) -> dict[str, Any]:
     }
 
 
+def build_commercial_validation(
+    dataset: ModelingDataset,
+    baseline_scored: Sequence[ScoredObservation],
+    portfolio: PortfolioReport,
+    *,
+    horizon: int,
+    model_versions: Sequence[str],
+) -> dict[str, Any]:
+    """Constraints, cost/exposure decomposition, drift monitoring, audit stub.
+
+    Synthetic-only integration path. The constrained book is NOT a recommended
+    portfolio — it is a feasibility approximation. Research diagnostics only.
+    """
+    # constraints on the latest valid date's long/short book
+    ok_dates = [s for s in portfolio.per_date if s.status == PORTFOLIO_STATUS_OK]
+    constraints_summary: dict[str, Any] = {"status": "no_valid_dates"}
+    if ok_dates:
+        latest = ok_dates[-1]
+        sector_of = {
+            o.ticker: o.sector
+            for o in dataset.included()
+            if o.decision_date == latest.decision_date
+        }
+        book = PositionBook(
+            long_weights=dict(latest.long_weights),
+            short_weights=dict(latest.short_weights),
+            sector_of=sector_of,
+            adv_of=None,  # synthetic fixtures carry no ADV; never fabricated
+        )
+        result = apply_constraints(
+            book, ConstraintConfig(max_weight_per_name=0.34, max_sector_weight=0.6)
+        )
+        constraints_summary = {
+            "status": result.status,
+            "decision_date": latest.decision_date.isoformat(),
+            "liquidity_adv_available": False,
+            "long_gross_before": result.long.gross_before,
+            "long_gross_after": result.long.gross_after,
+            "short_gross_before": result.short.gross_before,
+            "short_gross_after": result.short.gross_after,
+            "applied_constraints": result.applied_constraints,
+            "warnings": result.warnings,
+        }
+
+    # drift monitoring over decision dates: spread, turnover, per-date Rank IC
+    periods: list[str] = []
+    spreads: list[float | None] = []
+    turnover_by_date = {
+        row["decision_date"]: row["total_turnover"] for row in portfolio.turnover.per_date
+    }
+    label_key = f"forward_return_h{horizon}"
+    scored_by_date: dict[date, list[ScoredObservation]] = {}
+    for obs in baseline_scored:
+        scored_by_date.setdefault(obs.decision_date, []).append(obs)
+    ic_series: list[float | None] = []
+    turnover_series: list[float | None] = []
+    for spread in sorted(portfolio.per_date, key=lambda s: s.decision_date):
+        iso = spread.decision_date.isoformat()
+        periods.append(iso)
+        spreads.append(spread.spread_return)
+        turnover_series.append(turnover_by_date.get(iso))
+        group = scored_by_date.get(spread.decision_date, [])
+        pairs = [
+            (float(o.score), float(o.labels[label_key]))
+            for o in group
+            if o.score is not None and o.labels.get(label_key) is not None
+        ]
+        ic_series.append(
+            spearman([s for s, _ in pairs], [r for _, r in pairs]) if len(pairs) >= 2 else None
+        )
+    monitoring = build_monitoring_report(
+        periods,
+        {"long_short_spread": spreads, "rank_ic": ic_series, "turnover": turnover_series},
+        is_synthetic=dataset.is_synthetic,
+    )
+
+    audit = build_audit_manifest(
+        command={"report": "modeling-report", "horizon": horizon},
+        model_versions=list(model_versions),
+        feature_columns=list(ALL_FACTORS),
+        target_columns=[label_key],
+        horizons=list(dataset.horizons),
+        no_look_ahead_status=None,
+        is_synthetic=dataset.is_synthetic,
+        warnings=["embedded audit stub; use build-audit-manifest for input fingerprints"],
+        stable=True,
+    )
+
+    return {
+        "constraints": constraints_summary,
+        "portfolio_commercial": portfolio.commercial,
+        "monitoring": monitoring.to_dict(),
+        "audit_manifest_stub": {
+            "run_id": audit["run_id"],
+            "synthetic_vs_real": audit["synthetic_vs_real"],
+            "model_versions": audit["model_versions"],
+        },
+        "limitations": [
+            "Commercial-validation infrastructure, NOT commercial-ready proof.",
+            "The constrained book is a feasibility approximation, not a recommended "
+            "portfolio.",
+            "Liquidity/ADV constraints require real liquidity data to be meaningful "
+            "(none in synthetic fixtures; ADV is never fabricated).",
+            "Audit manifests improve reproducibility but do not prove model validity.",
+        ],
+    }
+
+
 def build_modeling_report(
     dataset: ModelingDataset,
     prices: Mapping[str, Sequence[PriceBar]],
@@ -453,6 +574,19 @@ def build_modeling_report(
         dataset, baseline_scored, horizon=primary_horizon, n_quantiles=n_quantiles
     )
 
+    model_versions = ["baseline_factor_ranker_v1"] + [
+        v["model_version"]
+        for v in model_diversity["linear_models"].values()
+        if v.get("model_version")
+    ]
+    commercial_validation = build_commercial_validation(
+        dataset,
+        baseline_scored,
+        portfolio_by_horizon[str(primary_horizon)],
+        horizon=primary_horizon,
+        model_versions=model_versions,
+    )
+
     tickers = sorted({o.ticker for o in dataset.included()}) or sorted(
         {o.ticker for o in dataset.observations}
     )
@@ -472,6 +606,7 @@ def build_modeling_report(
         neutralized=neutralized,
         mmc_style=mmc_style,
         model_diversity=model_diversity,
+        commercial_validation=commercial_validation,
     )
 
 
@@ -734,6 +869,41 @@ def _markdown(report: ModelingReport) -> str:
         "- Top permutation importance: "
         + ", ".join(f"{r['feature']}={_fmt(r['importance'])}" for r in perm_rows)
     )
+    lines.append("")
+
+    cv = data["commercial_validation"]
+    lines += ["## Commercial validation (research diagnostics)", ""]
+    lines.append(
+        "Constraints, cost/exposure decomposition, and drift monitoring. The "
+        "constrained book is a feasibility approximation, NOT a recommended portfolio."
+    )
+    lines.append("")
+    con = cv["constraints"]
+    lines.append(
+        f"- Constraints (latest date): status {con['status']}, ADV available "
+        f"{con.get('liquidity_adv_available')}, applied {con.get('applied_constraints')}"
+    )
+    pc = cv["portfolio_commercial"]
+    if pc and pc.get("status") == "ok":
+        lines.append(
+            f"- Gross vs net mean spread: {_fmt(pc['cost_decomposition']['gross_mean_spread'])} "
+            f"-> {_fmt(pc['cost_decomposition']['net_mean_spread'])}"
+        )
+        lines.append(
+            f"- Benchmark-relative Sharpe-like (long excess vs universe): "
+            f"{_fmt(pc['benchmark_relative']['benchmark_relative_sharpe_like'])}"
+        )
+        lines.append(
+            f"- Net sector exposure: {pc['exposure']['net_sector_exposure']}"
+        )
+        lines.append(
+            f"- Concentration: effective N long "
+            f"{_fmt(pc['concentration']['effective_n_long'])}, top weight long "
+            f"{_fmt(pc['concentration']['top_weight_long_mean'])}"
+        )
+    flagged = sum(len(m["flagged_periods"]) for m in cv["monitoring"]["metrics"].values())
+    lines.append(f"- Drift flags across monitored metrics: {flagged}")
+    lines.append(f"- Audit manifest run_id (stub): `{cv['audit_manifest_stub']['run_id']}`")
     lines.append("")
 
     lines += ["## No-look-ahead status", ""]

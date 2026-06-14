@@ -49,7 +49,19 @@ from jp_stock_analysis.analysis.signal_engine import generate_signals
 from jp_stock_analysis.analysis.valuation import analyze_valuation
 from jp_stock_analysis.config import AnalysisConfig
 from jp_stock_analysis.errors import JPStockAnalysisError, ProviderError
+from jp_stock_analysis.modeling.audit import (
+    build_audit_manifest,
+    current_git_commit,
+    fingerprint_file,
+    project_version,
+    write_audit_manifest_outputs,
+)
 from jp_stock_analysis.modeling.baseline_ranker import score_baseline, scored_observations
+from jp_stock_analysis.modeling.constraints import (
+    ConstraintConfig,
+    PositionBook,
+    apply_constraints,
+)
 from jp_stock_analysis.modeling.dataset import build_modeling_dataset, write_dataset_outputs
 from jp_stock_analysis.modeling.factors import ALL_FACTORS
 from jp_stock_analysis.modeling.feature_importance import (
@@ -59,6 +71,10 @@ from jp_stock_analysis.modeling.feature_importance import (
 from jp_stock_analysis.modeling.fixtures import build_synthetic_bundle
 from jp_stock_analysis.modeling.linear_models import ElasticNetRanker, RidgeRanker
 from jp_stock_analysis.modeling.ml_models import MODEL_TYPES, train_ranking_model
+from jp_stock_analysis.modeling.monitoring import (
+    build_monitoring_report,
+    write_monitoring_outputs,
+)
 from jp_stock_analysis.modeling.neutralization import (
     ExposureObservation,
     neutralized_rank_ic,
@@ -606,6 +622,63 @@ def build_parser() -> argparse.ArgumentParser:
     stability.add_argument(
         "--seed-count", default=4, type=int, help="synthetic seed-noise probe count"
     )
+
+    constraints = subparsers.add_parser(
+        "evaluate-portfolio-constraints",
+        help="apply position/liquidity/sector/turnover constraints to the baseline "
+        "long-short book (research feasibility approximation; NOT a recommended "
+        "portfolio, NOT order execution)",
+    )
+    _add_modeling_input_args(constraints)
+    constraints.add_argument("--horizon", default=20, type=int)
+    constraints.add_argument("--portfolio-top-quantile", default=0.2, type=float)
+    constraints.add_argument("--portfolio-bottom-quantile", default=0.2, type=float)
+    constraints.add_argument("--max-weight-per-name", default=None, type=float)
+    constraints.add_argument("--max-sector-weight", default=None, type=float)
+    constraints.add_argument(
+        "--max-participation-rate",
+        default=None,
+        type=float,
+        help="requires an ADV column; synthetic fixtures have none (never fabricated)",
+    )
+    constraints.add_argument("--min-adv", default=None, type=float)
+    constraints.add_argument("--max-total-turnover", default=None, type=float)
+    constraints.add_argument("--transaction-cost-bps", default=0.0, type=float)
+
+    audit = subparsers.add_parser(
+        "build-audit-manifest",
+        help="build a deterministic reproducibility manifest (input fingerprints, "
+        "model versions, synthetic-vs-real); research-only",
+    )
+    audit.add_argument("--synthetic", action="store_true")
+    audit.add_argument(
+        "--input", action="append", default=None, help="input file to fingerprint; repeatable"
+    )
+    audit.add_argument("--output-dir", required=True)
+    audit.add_argument(
+        "--fixed-timestamp",
+        default=None,
+        help="fix created_at_utc for deterministic runs (e.g. tests)",
+    )
+    audit.add_argument(
+        "--run-id", default=None, help="fix run_id for deterministic runs (else derived)"
+    )
+
+    monitoring = subparsers.add_parser(
+        "evaluate-model-monitoring",
+        help="drift/stability monitoring over decision dates from a metrics CSV or "
+        "the synthetic baseline (research diagnostics only)",
+    )
+    _add_modeling_input_args(monitoring)
+    monitoring.add_argument("--horizon", default=20, type=int)
+    monitoring.add_argument(
+        "--metrics-csv",
+        default=None,
+        help="CSV with a period column + metric columns (overrides --synthetic series)",
+    )
+    monitoring.add_argument("--period-column", default="decision_date")
+    monitoring.add_argument("--window", default=3, type=int)
+    monitoring.add_argument("--z-threshold", default=2.0, type=float)
     return parser
 
 
@@ -1146,6 +1219,158 @@ def _run_evaluate_model_stability(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_evaluate_portfolio_constraints(args: argparse.Namespace) -> int:
+    try:
+        dataset, _prices, _disclosure = _load_modeling_dataset(args)
+        scores = score_baseline(dataset)
+        scored = [s for s in scored_observations(dataset, scores) if s.score is not None]
+        portfolio = evaluate_portfolio(
+            observations_from_scored(scored, args.horizon),
+            horizon=args.horizon,
+            is_synthetic=dataset.is_synthetic,
+            top_quantile=args.portfolio_top_quantile,
+            bottom_quantile=args.portfolio_bottom_quantile,
+            transaction_cost_bps=args.transaction_cost_bps,
+        )
+        ok_dates = [s for s in portfolio.per_date if s.status == "ok"]
+        if not ok_dates:
+            raise ValueError("no valid long-short date to constrain")
+        latest = ok_dates[-1]
+        sector_of = {
+            o.ticker: o.sector
+            for o in dataset.included()
+            if o.decision_date == latest.decision_date
+        }
+        book = PositionBook(
+            long_weights=dict(latest.long_weights),
+            short_weights=dict(latest.short_weights),
+            sector_of=sector_of,
+            adv_of=None,  # synthetic fixtures carry no ADV; never fabricated
+        )
+        config = ConstraintConfig(
+            max_weight_per_name=args.max_weight_per_name,
+            max_sector_weight=args.max_sector_weight,
+            max_participation_rate=args.max_participation_rate,
+            min_adv=args.min_adv,
+            max_total_turnover=args.max_total_turnover,
+        )
+        result = apply_constraints(book, config)
+        out_dir = Path(args.output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        import csv as _csv
+        import json as _json
+
+        payload = {
+            "decision_date": latest.decision_date.isoformat(),
+            "is_synthetic": dataset.is_synthetic,
+            "synthetic_warning": (
+                "SYNTHETIC FIXTURE RESULTS — not real market evidence."
+                if dataset.is_synthetic
+                else None
+            ),
+            "constraints": result.to_dict(),
+            "portfolio_commercial": portfolio.commercial,
+        }
+        (out_dir / "constrained_portfolio.json").write_text(
+            _json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        with (out_dir / "constrained_portfolio.csv").open(
+            "w", encoding="utf-8", newline=""
+        ) as handle:
+            writer = _csv.writer(handle, lineterminator="\n")
+            writer.writerow(["leg", "ticker", "unconstrained_weight", "constrained_weight"])
+            for leg, leg_result in (("long", result.long), ("short", result.short)):
+                names = sorted(set(leg_result.unconstrained) | set(leg_result.constrained))
+                for ticker in names:
+                    writer.writerow(
+                        [
+                            leg,
+                            ticker,
+                            f"{leg_result.unconstrained.get(ticker, 0.0):.8f}",
+                            f"{leg_result.constrained.get(ticker, 0.0):.8f}",
+                        ]
+                    )
+        (out_dir / "constrained_portfolio.md").write_text(
+            "# Constrained Portfolio (research feasibility, NOT a recommendation)\n\n"
+            f"{result.disclaimer}\n\n- status: {result.status}\n"
+            f"- applied: {result.applied_constraints}\n",
+            encoding="utf-8",
+        )
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Constraints status={result.status}. Written to: {args.output_dir}")
+    return 0
+
+
+def _run_build_audit_manifest(args: argparse.Namespace) -> int:
+    try:
+        fingerprints = [fingerprint_file(p) for p in (args.input or [])]
+        manifest = build_audit_manifest(
+            command={"command": "build-audit-manifest", "inputs": args.input or []},
+            input_fingerprints=fingerprints,
+            is_synthetic=args.synthetic,
+            git_commit=current_git_commit("."),
+            version=project_version(),
+            run_id=args.run_id,
+            created_at_utc=args.fixed_timestamp,
+            stable=True,
+        )
+        paths = write_audit_manifest_outputs(manifest, args.output_dir)
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Audit manifest run_id={manifest['run_id']} written to: {paths['json_path'].parent}")
+    return 0
+
+
+def _run_evaluate_model_monitoring(args: argparse.Namespace) -> int:
+    try:
+        if args.metrics_csv:
+            periods, columns = _load_metrics_csv(args.metrics_csv, args.period_column)
+            is_synthetic = False
+        else:
+            dataset, _prices, _disclosure = _load_modeling_dataset(args)
+            scores = score_baseline(dataset)
+            scored = [s for s in scored_observations(dataset, scores) if s.score is not None]
+            portfolio = evaluate_portfolio(
+                observations_from_scored(scored, args.horizon),
+                horizon=args.horizon,
+                is_synthetic=dataset.is_synthetic,
+            )
+            periods = [s.decision_date.isoformat() for s in portfolio.per_date]
+            columns = {"long_short_spread": [s.spread_return for s in portfolio.per_date]}
+            is_synthetic = dataset.is_synthetic
+        report = build_monitoring_report(
+            periods, columns, window=args.window, z_threshold=args.z_threshold,
+            is_synthetic=is_synthetic,
+        )
+        paths = write_monitoring_outputs(report, args.output_dir)
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Monitoring written to: {paths['json_path'].parent}")
+    return 0
+
+
+def _load_metrics_csv(path: str, period_column: str):
+    import csv as _csv
+
+    rows = list(_csv.DictReader(Path(path).open(encoding="utf-8-sig")))
+    if not rows or period_column not in rows[0]:
+        raise ValueError(f"metrics CSV must have a '{period_column}' column")
+    periods = [row[period_column] for row in rows]
+    metric_names = [c for c in rows[0] if c != period_column]
+    columns: dict[str, list[float | None]] = {}
+    for name in metric_names:
+        values: list[float | None] = []
+        for row in rows:
+            raw = (row.get(name) or "").strip()
+            values.append(float(raw) if raw else None)
+        columns[name] = values
+    return periods, columns
+
+
 def _build_exposure_observations(dataset, scored, horizon, factor_columns):
     """CLI helper: build neutralization inputs (factor columns + sector dummies)."""
     features_by_key = {(o.ticker, o.decision_date): o.features for o in dataset.included()}
@@ -1199,6 +1424,12 @@ def main(argv: list[str] | None = None) -> int:
         return _run_train_linear_ranking_model(args)
     if args.command == "evaluate-model-stability":
         return _run_evaluate_model_stability(args)
+    if args.command == "evaluate-portfolio-constraints":
+        return _run_evaluate_portfolio_constraints(args)
+    if args.command == "build-audit-manifest":
+        return _run_build_audit_manifest(args)
+    if args.command == "evaluate-model-monitoring":
+        return _run_evaluate_model_monitoring(args)
     if args.command != "analyze":
         return 2
     if args.provider == "local" and not args.prices:
