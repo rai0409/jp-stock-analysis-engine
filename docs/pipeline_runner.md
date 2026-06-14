@@ -91,7 +91,11 @@ The determinism gate (`verify-pipeline-determinism`) checks that *repeated runs
 now* are byte-identical. The **regression baseline** (`check-pipeline-regression`,
 see `docs/pipeline_regression.md`) checks *future changes* against a committed
 golden reference — catching a code change that alters a metric or artifact. Both
-are reproducibility checks, not model-validity checks.
+are reproducibility checks, not model-validity checks. To diff two arbitrary runs
+(A vs B) or to explicitly promote a new approved baseline with a provenance
+record, see `compare-pipeline-runs` / `promote-pipeline-baseline` in
+`docs/run_comparison.md` — metric deltas there are descriptive only (never
+better/worse) and a promotion is an approved reference, not an improvement.
 
 ## Recommended real-data run order
 

@@ -85,6 +85,18 @@ A baseline update is a reviewed action: run with `--update-baseline`, inspect th
 written `golden_pipeline_baseline.json` diff in code review, and commit it
 deliberately. Never update it to silence an unexplained regression.
 
+## Comparing arbitrary runs & promoting a new baseline
+
+`check-pipeline-regression` compares a fresh run to the *committed* golden
+baseline. To diff two arbitrary runs (A vs B), or to bless a new run as the
+approved reference, see `docs/run_comparison.md`:
+
+- `compare-pipeline-runs --run-a … --run-b …` — neutral artifact/metric-delta
+  report (descriptive only, never better/worse).
+- `promote-pipeline-baseline --from-run … --reviewer-note … --require-approval
+  --approve` — explicit, auditable baseline update with a provenance record.
+  Promotion is an *approved reference*, not a model improvement.
+
 ## Real-data note
 
 This is synthetic-only change detection. Real-data results still require

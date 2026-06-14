@@ -361,6 +361,76 @@ def test_check_pipeline_regression_update_baseline_writes(tmp_path):
     assert baseline["synthetic"] is True
 
 
+def test_compare_pipeline_runs_writes_outputs(tmp_path):
+    from jp_stock_analysis.modeling.regression_baseline import run_golden_synthetic_pipeline
+
+    a = run_golden_synthetic_pipeline(tmp_path / "a")
+    b = run_golden_synthetic_pipeline(tmp_path / "b")
+    out = tmp_path / "cmp"
+    rc = main(
+        ["compare-pipeline-runs", "--run-a", str(a), "--run-b", str(b), "--output-dir", str(out)]
+    )
+    assert rc == 0
+    report = json.loads((out / "run_comparison.json").read_text(encoding="utf-8"))
+    assert report["comparison_status"] == "identical"
+    assert report["research_only"] is True
+    assert (out / "run_comparison.md").exists()
+
+
+def test_promote_pipeline_baseline_blocked_without_approval(tmp_path):
+    from jp_stock_analysis.modeling.regression_baseline import run_golden_synthetic_pipeline
+
+    a = run_golden_synthetic_pipeline(tmp_path / "a")
+    baseline_path = tmp_path / "baseline.json"
+    out = tmp_path / "prom"
+    rc = main(
+        [
+            "promote-pipeline-baseline",
+            "--from-run",
+            str(a),
+            "--baseline-path",
+            str(baseline_path),
+            "--reviewer-note",
+            "test note",
+            "--require-approval",
+            "--output-dir",
+            str(out),
+        ]
+    )
+    assert rc == 2  # blocked, exits nonzero
+    assert not baseline_path.exists()  # baseline NOT updated
+    record = json.loads((out / "baseline_promotion_record.json").read_text(encoding="utf-8"))
+    assert record["status"] == "blocked_approval_required"
+
+
+def test_promote_pipeline_baseline_with_approval_updates(tmp_path):
+    from jp_stock_analysis.modeling.regression_baseline import run_golden_synthetic_pipeline
+
+    a = run_golden_synthetic_pipeline(tmp_path / "a")
+    baseline_path = tmp_path / "baseline.json"
+    out = tmp_path / "prom"
+    rc = main(
+        [
+            "promote-pipeline-baseline",
+            "--from-run",
+            str(a),
+            "--baseline-path",
+            str(baseline_path),
+            "--reviewer-note",
+            "approved reference",
+            "--require-approval",
+            "--approve",
+            "--output-dir",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    assert baseline_path.exists()
+    record = json.loads((out / "baseline_promotion_record.json").read_text(encoding="utf-8"))
+    assert record["status"] == "promoted"
+    assert record["reviewer_note"] == "approved reference"
+
+
 def test_evaluate_neutralized_ranking_synthetic(tmp_path):
     out = tmp_path / "neut"
     rc = main(

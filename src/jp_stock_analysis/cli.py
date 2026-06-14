@@ -105,6 +105,12 @@ from jp_stock_analysis.modeling.report import (
     build_modeling_report,
     write_modeling_report_outputs,
 )
+from jp_stock_analysis.modeling.run_compare import (
+    compare_runs,
+    promote_pipeline_baseline,
+    write_promotion_record_outputs,
+    write_run_comparison_outputs,
+)
 from jp_stock_analysis.modeling.stability import (
     build_stability_report,
     compute_fold_metrics,
@@ -746,6 +752,54 @@ def build_parser() -> argparse.ArgumentParser:
         "--strict-new-artifacts",
         action="store_true",
         help="treat an unexpected new artifact as a regression",
+    )
+
+    compare = subparsers.add_parser(
+        "compare-pipeline-runs",
+        help="diff two pipeline run directories (A vs B) into a neutral artifact / "
+        "metric-delta report (descriptive only, never better/worse); research-only",
+    )
+    compare.add_argument("--run-a", required=True, help="run directory A")
+    compare.add_argument("--run-b", required=True, help="run directory B")
+    compare.add_argument("--output-dir", required=True)
+    compare.add_argument("--run-id-a", default=None)
+    compare.add_argument("--run-id-b", default=None)
+    compare.add_argument("--fixed-timestamp", default=None)
+    compare.add_argument(
+        "--strict-new-artifacts",
+        action="store_true",
+        help="record only_in_b artifacts (informational; never a performance claim)",
+    )
+    compare.add_argument(
+        "--canonicalize",
+        action="store_true",
+        default=True,
+        help="canonicalize declared volatile fields before comparing (default on)",
+    )
+
+    promote = subparsers.add_parser(
+        "promote-pipeline-baseline",
+        help="promote a run to the approved golden baseline AFTER explicit review "
+        "(writes an auditable provenance record); research-only",
+    )
+    promote.add_argument("--from-run", required=True, help="run directory to promote")
+    promote.add_argument("--baseline-path", required=True)
+    promote.add_argument("--output-dir", required=True)
+    promote.add_argument("--reviewer-note", default="")
+    promote.add_argument(
+        "--approve", action="store_true", help="explicit approval to update the baseline"
+    )
+    promote.add_argument(
+        "--require-approval",
+        action="store_true",
+        help="block promotion unless --approve is also given",
+    )
+    promote.add_argument("--run-id", default=GOLDEN_RUN_ID)
+    promote.add_argument("--fixed-timestamp", default=GOLDEN_TIMESTAMP)
+    promote.add_argument(
+        "--previous-baseline-path",
+        default=None,
+        help="prior baseline for the metric-delta comparison (defaults to --baseline-path)",
     )
     return parser
 
@@ -1597,6 +1651,56 @@ def _run_check_pipeline_regression(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_compare_pipeline_runs(args: argparse.Namespace) -> int:
+    try:
+        report = compare_runs(
+            args.run_a, args.run_b,
+            run_id_a=args.run_id_a, run_id_b=args.run_id_b,
+            fixed_timestamp=args.fixed_timestamp,
+            strict_new_artifacts=args.strict_new_artifacts,
+        )
+        paths = write_run_comparison_outputs(report, args.output_dir)
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Run comparison: {report['comparison_status']} ({report['counts']}). "
+        f"Report: {paths['json_path']}"
+    )
+    return 0
+
+
+def _run_promote_pipeline_baseline(args: argparse.Namespace) -> int:
+    try:
+        record, updated = promote_pipeline_baseline(
+            args.from_run, args.baseline_path,
+            reviewer_note=args.reviewer_note,
+            require_approval=args.require_approval,
+            approved=args.approve,
+            previous_baseline_path=args.previous_baseline_path,
+            run_id=args.run_id,
+            fixed_timestamp=args.fixed_timestamp,
+        )
+        paths = write_promotion_record_outputs(record, args.output_dir)
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if updated:
+        print(
+            f"warning: baseline INTENTIONALLY updated at {args.baseline_path} "
+            f"(reviewer note recorded). Record: {paths['json_path']}",
+            file=sys.stderr,
+        )
+        print(f"Baseline promoted. Record: {paths['json_path']}")
+        return 0
+    print(
+        f"Promotion BLOCKED ({record['status']}); baseline NOT updated. "
+        f"Record: {paths['json_path']}",
+        file=sys.stderr,
+    )
+    return 2
+
+
 def _load_metrics_csv(path: str, period_column: str):
     import csv as _csv
 
@@ -1680,6 +1784,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_verify_pipeline_determinism(args)
     if args.command == "check-pipeline-regression":
         return _run_check_pipeline_regression(args)
+    if args.command == "compare-pipeline-runs":
+        return _run_compare_pipeline_runs(args)
+    if args.command == "promote-pipeline-baseline":
+        return _run_promote_pipeline_baseline(args)
     if args.command != "analyze":
         return 2
     if args.provider == "local" and not args.prices:

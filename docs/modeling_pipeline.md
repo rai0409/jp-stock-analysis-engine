@@ -49,6 +49,7 @@ point-in-time fundamentals/prices arrive, validation can run immediately.
 | `modeling/pipeline.py` | deterministic end-to-end pipeline runner (see `docs/pipeline_runner.md`) |
 | `modeling/determinism.py` | canonicalization + artifact-tree comparison (determinism gate) |
 | `modeling/regression_baseline.py` | golden baseline capture + change detection (see `docs/pipeline_regression.md`) |
+| `modeling/run_compare.py` | run A-vs-B comparison + explicit baseline promotion (see `docs/run_comparison.md`) |
 | `modeling/report.py` | full offline modeling report |
 | `modeling/fixtures.py` | deterministic synthetic bundle (SYNTHETIC ONLY) |
 
@@ -86,6 +87,7 @@ python -m jp_stock_analysis.cli modeling-report          --synthetic --output-di
 python -m jp_stock_analysis.cli run-modeling-pipeline        --synthetic --run-id run --fixed-timestamp 1970-01-01T00:00:00Z --output-dir out/
 python -m jp_stock_analysis.cli verify-pipeline-determinism  --synthetic --fail-on-difference --output-dir out/
 python -m jp_stock_analysis.cli check-pipeline-regression    --synthetic --fail-on-regression --output-dir out/
+python -m jp_stock_analysis.cli compare-pipeline-runs        --run-a out/a/run --run-b out/b/run --output-dir out/cmp
 ```
 
 The `modeling-report` long-short and neutralization sections accept
