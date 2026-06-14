@@ -226,7 +226,7 @@ validation?" flags whether the gap prevents a credible real comparison.
 | item | status |
 | --- | --- |
 | disclaimers / research-only | DONE (every report) |
-| reproducibility / determinism | DONE |
+| reproducibility / determinism | **DONE (infra)** — end-to-end `run-modeling-pipeline` + `verify-pipeline-determinism` determinism gate (two runs byte-identical; `pipeline.py` / `determinism.py`) |
 | synthetic-vs-real labeling | DONE |
 | artifact tracking (JSON/CSV/MD) | DONE |
 | config management | PARTIAL (CLI args; no config file/versioned run manifest) |
@@ -364,8 +364,12 @@ The system is **infrastructure-competitive on hygiene** (no-look-ahead,
 purged/embargo, accounting-basis separation, reproducible research-only reports).
 The metric-surface gap is now **closed at the infrastructure level**: P1 (a
 JPX-style Sharpe-of-spread long-short evaluator with turnover/drawdown/cost) and
-P2 (Numerai-style neutralization + neutralized Rank IC + MMC-style delta) are
-**implemented and synthetic-tested** (2026-06-14). What remains is **trained-model
-sophistication** and, decisively, **real data**: **no performance comparison or
-"beat the winners" claim is possible until P0 real point-in-time data and strict
-validation exist.** Synthetic-fixture numbers are not market evidence.
+P2 (Numerai-style neutralization + neutralized Rank IC + MMC-style delta), P3
+(linear/Elastic-Net/ensemble/stability/importance) and P4 (constraints / cost /
+audit / monitoring) are **implemented and synthetic-tested** (2026-06-14), and the
+whole chain now runs as one **deterministic, reproduce-checked pipeline**
+(`run-modeling-pipeline` + `verify-pipeline-determinism`). What remains is
+**trained-model sophistication** and, decisively, **real data**: **no performance
+comparison or "beat the winners" claim is possible until P0 real point-in-time
+data and strict validation exist.** Synthetic-fixture numbers are not market
+evidence; the determinism gate proves reproducibility, not validity.

@@ -44,8 +44,10 @@ point-in-time fundamentals/prices arrive, validation can run immediately.
 | `modeling/stability.py` | walk-forward / seed stability summaries |
 | `modeling/feature_importance.py` | coefficient + permutation feature importance |
 | `modeling/constraints.py` | position/liquidity/sector/turnover feasibility constraints (see `docs/commercial_validation.md`) |
-| `modeling/audit.py` | deterministic reproducibility manifest (secret-scrubbed) |
+| `modeling/audit.py` | deterministic reproducibility manifest + artifact-manifest index (secret-scrubbed) |
 | `modeling/monitoring.py` | drift / stability monitoring across decision dates |
+| `modeling/pipeline.py` | deterministic end-to-end pipeline runner (see `docs/pipeline_runner.md`) |
+| `modeling/determinism.py` | canonicalization + artifact-tree comparison (determinism gate) |
 | `modeling/report.py` | full offline modeling report |
 | `modeling/fixtures.py` | deterministic synthetic bundle (SYNTHETIC ONLY) |
 
@@ -79,6 +81,9 @@ python -m jp_stock_analysis.cli evaluate-portfolio-constraints --synthetic --hor
 python -m jp_stock_analysis.cli build-audit-manifest         --synthetic --input fundamentals.csv --output-dir out/
 python -m jp_stock_analysis.cli evaluate-model-monitoring     --synthetic --horizon 20 --output-dir out/
 python -m jp_stock_analysis.cli modeling-report          --synthetic --output-dir out/
+# or run everything in one deterministic pass (see docs/pipeline_runner.md):
+python -m jp_stock_analysis.cli run-modeling-pipeline        --synthetic --run-id run --fixed-timestamp 1970-01-01T00:00:00Z --output-dir out/
+python -m jp_stock_analysis.cli verify-pipeline-determinism  --synthetic --fail-on-difference --output-dir out/
 ```
 
 The `modeling-report` long-short and neutralization sections accept
@@ -121,6 +126,10 @@ python -m jp_stock_analysis.cli modeling-report \
    `lightgbm` / `catboost` / `all-modeling` extras first).
 7. **compare against baseline** — the report's model-comparison table.
 8. **generate report** — `modeling-report`.
+
+Or run all of the above deterministically in one pass with
+`run-modeling-pipeline` and reproduce-check it with `verify-pipeline-determinism`
+(see `docs/pipeline_runner.md`).
 
 ## Optional dependencies
 

@@ -69,6 +69,108 @@ def fingerprint_file(path: str | Path, *, include_absolute_path: bool = False) -
     return info
 
 
+def fingerprint_artifact(
+    base_dir: Path, path: Path, *, producing_step: str | None
+) -> dict[str, Any]:
+    """Fingerprint one produced artifact (relative path; CSV/JSON aware)."""
+    rel = str(path.relative_to(base_dir)).replace("\\", "/")
+    data = path.read_bytes()
+    entry: dict[str, Any] = {
+        "relative_path": rel,  # relative only (no absolute temp paths)
+        "artifact_type": path.suffix.lstrip(".") or "file",
+        "producing_step": producing_step,
+        "exists": True,
+        "size_bytes": len(data),
+        "sha256": _sha256(data),
+        "research_only": True,
+    }
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        lines = data.decode("utf-8-sig", errors="replace").splitlines()
+        if lines:
+            entry["columns"] = [c.strip() for c in lines[0].split(",")]
+            entry["row_count"] = max(0, len(lines) - 1)
+    elif suffix == ".json":
+        try:
+            payload = json.loads(data.decode("utf-8"))
+            if isinstance(payload, dict):
+                entry["json_top_level_keys"] = sorted(payload.keys())
+        except (ValueError, UnicodeDecodeError):
+            entry["warnings"] = ["unparseable JSON"]
+    return entry
+
+
+def build_artifact_manifest(
+    run_dir: str | Path,
+    *,
+    step_by_path: Mapping[str, str] | None = None,
+    is_synthetic: bool = False,
+    exclude: Sequence[str] = (),
+) -> dict[str, Any]:
+    """Index every produced artifact under ``run_dir`` with its fingerprint.
+
+    Deterministic ordering by relative path. ``exclude`` skips self-referential
+    artifacts (the manifest and the summary). No secrets, no absolute paths.
+    """
+    base = Path(run_dir)
+    step_by_path = step_by_path or {}
+    excluded = set(exclude)
+    artifacts: list[dict[str, Any]] = []
+    for path in sorted(base.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = str(path.relative_to(base)).replace("\\", "/")
+        if rel in excluded:
+            continue
+        entry = fingerprint_artifact(base, path, producing_step=step_by_path.get(rel))
+        entry["synthetic"] = is_synthetic
+        artifacts.append(entry)
+    artifacts.sort(key=lambda e: e["relative_path"])
+    return {
+        "disclaimer": RESEARCH_DISCLAIMER,
+        "research_only": True,
+        "synthetic_vs_real": "synthetic" if is_synthetic else "real",
+        "synthetic_warning": (
+            "SYNTHETIC FIXTURE RESULTS — not real market evidence." if is_synthetic else None
+        ),
+        "artifact_count": len(artifacts),
+        "artifacts": artifacts,
+    }
+
+
+def write_artifact_manifest_outputs(
+    manifest: Mapping[str, Any], output_dir: str | Path, *, write_markdown: bool = True
+) -> dict[str, Path]:
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    json_path = out_dir / "artifact_manifest.json"
+    json_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    paths = {"json_path": json_path}
+    if write_markdown:
+        md_path = out_dir / "artifact_manifest.md"
+        lines = ["# Artifact Manifest Index", "", str(manifest.get("disclaimer", "")), ""]
+        if manifest.get("synthetic_warning"):
+            lines += [f"> **{manifest['synthetic_warning']}**", ""]
+        lines += [
+            f"- Artifacts: {manifest['artifact_count']}",
+            "",
+            "| artifact | type | step | rows | sha256 |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+        for a in manifest["artifacts"]:
+            lines.append(
+                f"| `{a['relative_path']}` | {a['artifact_type']} | "
+                f"{a.get('producing_step') or '—'} | {a.get('row_count', '—')} | "
+                f"{a['sha256'][:12]}… |"
+            )
+        lines.append("")
+        md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        paths["markdown_path"] = md_path
+    return paths
+
+
 def fingerprint_records(name: str, rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """Deterministic fingerprint of in-memory records (e.g. a DataFrame's rows)."""
     columns = sorted({c for row in rows for c in row}) if rows else []
@@ -224,11 +326,14 @@ def _markdown(manifest: Mapping[str, Any]) -> str:
 
 __all__ = [
     "EPOCH_UTC",
+    "build_artifact_manifest",
     "build_audit_manifest",
     "current_git_commit",
+    "fingerprint_artifact",
     "fingerprint_file",
     "fingerprint_records",
     "project_version",
     "scrub_secrets",
+    "write_artifact_manifest_outputs",
     "write_audit_manifest_outputs",
 ]

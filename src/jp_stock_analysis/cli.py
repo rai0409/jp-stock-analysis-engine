@@ -63,6 +63,10 @@ from jp_stock_analysis.modeling.constraints import (
     apply_constraints,
 )
 from jp_stock_analysis.modeling.dataset import build_modeling_dataset, write_dataset_outputs
+from jp_stock_analysis.modeling.determinism import (
+    compare_artifact_trees,
+    write_determinism_report,
+)
 from jp_stock_analysis.modeling.factors import ALL_FACTORS
 from jp_stock_analysis.modeling.feature_importance import (
     coefficient_importance,
@@ -80,6 +84,7 @@ from jp_stock_analysis.modeling.neutralization import (
     neutralized_rank_ic,
     write_neutralized_outputs,
 )
+from jp_stock_analysis.modeling.pipeline import PipelineConfig, run_pipeline
 from jp_stock_analysis.modeling.portfolio_metrics import (
     evaluate_portfolio,
     observations_from_scored,
@@ -679,7 +684,86 @@ def build_parser() -> argparse.ArgumentParser:
     monitoring.add_argument("--period-column", default="decision_date")
     monitoring.add_argument("--window", default=3, type=int)
     monitoring.add_argument("--z-threshold", default=2.0, type=float)
+
+    pipeline = subparsers.add_parser(
+        "run-modeling-pipeline",
+        help="run the full offline modeling pipeline into a stamped run directory "
+        "(dataset -> ... -> audit + artifact manifest); research-only",
+    )
+    _add_modeling_input_args(pipeline)
+    pipeline.add_argument("--run-id", default="run")
+    pipeline.add_argument("--fixed-timestamp", default=None)
+    pipeline.add_argument("--adv", default=None, help="optional ADV CSV (ticker,adv)")
+    _add_pipeline_config_args(pipeline)
+
+    verify = subparsers.add_parser(
+        "verify-pipeline-determinism",
+        help="run the pipeline twice and compare artifact trees (canonicalizing "
+        "only declared volatile fields); research-only",
+    )
+    _add_modeling_input_args(verify)
+    verify.add_argument("--run-id-prefix", default="det")
+    verify.add_argument("--fixed-timestamp", default="1970-01-01T00:00:00Z")
+    verify.add_argument("--adv", default=None, help="optional ADV CSV (ticker,adv)")
+    verify.add_argument(
+        "--fail-on-difference",
+        action="store_true",
+        help="exit nonzero if the two runs differ (default: report only)",
+    )
+    _add_pipeline_config_args(verify)
     return parser
+
+
+def _add_pipeline_config_args(sub: argparse.ArgumentParser) -> None:
+    sub.add_argument("--linear-models", default="ridge,elastic_net")
+    sub.add_argument("--alpha", default=0.05, type=float)
+    sub.add_argument("--l1-ratio", default=0.5, type=float)
+    sub.add_argument("--portfolio-top-quantile", default=0.2, type=float)
+    sub.add_argument("--portfolio-bottom-quantile", default=0.2, type=float)
+    sub.add_argument("--portfolio-rank-weighted", action="store_true")
+    sub.add_argument("--transaction-cost-bps", default=0.0, type=float)
+    sub.add_argument("--max-weight-per-name", default=None, type=float)
+    sub.add_argument("--max-sector-weight", default=None, type=float)
+    sub.add_argument("--max-participation-rate", default=None, type=float)
+    sub.add_argument("--min-adv", default=None, type=float)
+    sub.add_argument("--monitoring-window", default=3, type=int)
+    sub.add_argument("--monitoring-threshold", default=2.0, type=float)
+
+
+def _pipeline_config_from_args(args: argparse.Namespace) -> PipelineConfig:
+    linear_models = tuple(
+        m.strip() for m in args.linear_models.split(",") if m.strip()
+    )
+    return PipelineConfig(
+        linear_models=linear_models,
+        alpha=args.alpha,
+        l1_ratio=args.l1_ratio,
+        portfolio_top_quantile=args.portfolio_top_quantile,
+        portfolio_bottom_quantile=args.portfolio_bottom_quantile,
+        portfolio_rank_weighted=args.portfolio_rank_weighted,
+        transaction_cost_bps=args.transaction_cost_bps,
+        max_weight_per_name=args.max_weight_per_name,
+        max_sector_weight=args.max_sector_weight,
+        max_participation_rate=args.max_participation_rate,
+        min_adv=args.min_adv,
+        monitoring_window=args.monitoring_window,
+        monitoring_threshold=args.monitoring_threshold,
+    )
+
+
+def _load_adv_csv(path: str | None) -> dict[str, float] | None:
+    if not path:
+        return None
+    import csv as _csv
+
+    adv: dict[str, float] = {}
+    with Path(path).open(encoding="utf-8-sig", newline="") as handle:
+        for row in _csv.DictReader(handle):
+            ticker = (row.get("ticker") or row.get("code") or "").strip()
+            raw = (row.get("adv") or "").strip()
+            if ticker and raw:
+                adv[ticker] = float(raw)
+    return adv or None
 
 
 def _add_portfolio_args(sub: argparse.ArgumentParser) -> None:
@@ -1353,6 +1437,84 @@ def _run_evaluate_model_monitoring(args: argparse.Namespace) -> int:
     return 0
 
 
+def _pipeline_inputs(args: argparse.Namespace):
+    """Build (dataset, prices, disclosure_date, input_files, adv) for the pipeline."""
+    dataset, prices, disclosure_date = _load_modeling_dataset(args)
+    input_files = [
+        p for p in (getattr(args, "fundamentals", None), getattr(args, "prices", None),
+                    getattr(args, "metadata", None)) if p
+    ]
+    adv = _load_adv_csv(args.adv)
+    return dataset, prices, disclosure_date, input_files, adv
+
+
+def _run_run_modeling_pipeline(args: argparse.Namespace) -> int:
+    try:
+        dataset, prices, disclosure_date, input_files, adv = _pipeline_inputs(args)
+        summary = run_pipeline(
+            dataset,
+            prices,
+            output_dir=args.output_dir,
+            run_id=args.run_id,
+            fixed_timestamp=args.fixed_timestamp,
+            disclosure_date=disclosure_date,
+            config=_pipeline_config_from_args(args),
+            input_files=input_files,
+            adv=adv,
+            git_commit=current_git_commit("."),
+            version=project_version(),
+        )
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Pipeline run '{args.run_id}' ({summary['step_count']} steps, "
+        f"no-look-ahead={summary['no_look_ahead_status']}). "
+        f"Run dir: {summary['run_directory']}"
+    )
+    return 0
+
+
+def _run_verify_pipeline_determinism(args: argparse.Namespace) -> int:
+    try:
+        config = _pipeline_config_from_args(args)
+        run_id = f"{args.run_id_prefix}_run"
+        base = Path(args.output_dir)
+        run_dirs = []
+        for suffix in ("a", "b"):
+            dataset, prices, disclosure_date, input_files, adv = _pipeline_inputs(args)
+            parent = base / f"{args.run_id_prefix}_{suffix}"
+            run_pipeline(
+                dataset,
+                prices,
+                output_dir=parent,
+                run_id=run_id,
+                fixed_timestamp=args.fixed_timestamp,
+                disclosure_date=disclosure_date,
+                config=config,
+                input_files=input_files,
+                adv=adv,
+                git_commit=current_git_commit("."),
+                version=project_version(),
+            )
+            run_dirs.append(parent / run_id)
+        # canonicalize only the two differing parent absolute paths (declared volatile)
+        comparison = compare_artifact_trees(
+            run_dirs[0], run_dirs[1], volatile_values=[str(d) for d in run_dirs]
+        )
+        paths = write_determinism_report(comparison, base)
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Determinism: {comparison['overall'].upper()} "
+        f"({comparison['counts']}). Report: {paths['json_path']}"
+    )
+    if args.fail_on_difference and comparison["overall"] != "identical":
+        return 2
+    return 0
+
+
 def _load_metrics_csv(path: str, period_column: str):
     import csv as _csv
 
@@ -1430,6 +1592,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_build_audit_manifest(args)
     if args.command == "evaluate-model-monitoring":
         return _run_evaluate_model_monitoring(args)
+    if args.command == "run-modeling-pipeline":
+        return _run_run_modeling_pipeline(args)
+    if args.command == "verify-pipeline-determinism":
+        return _run_verify_pipeline_determinism(args)
     if args.command != "analyze":
         return 2
     if args.provider == "local" and not args.prices:

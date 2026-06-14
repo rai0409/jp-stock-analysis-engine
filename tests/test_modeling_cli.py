@@ -236,6 +236,53 @@ def test_evaluate_model_monitoring_synthetic(tmp_path):
     assert "long_short_spread" in payload["metrics"]
 
 
+def test_run_modeling_pipeline_synthetic(tmp_path):
+    out = tmp_path / "pipe"
+    rc = main(
+        [
+            "run-modeling-pipeline",
+            "--synthetic",
+            "--run-id",
+            "run",
+            "--fixed-timestamp",
+            "1970-01-01T00:00:00Z",
+            "--transaction-cost-bps",
+            "10",
+            "--max-weight-per-name",
+            "0.34",
+            "--output-dir",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    run_dir = out / "run"
+    summary = json.loads((run_dir / "pipeline_summary.json").read_text(encoding="utf-8"))
+    assert summary["synthetic_vs_real"] == "synthetic"
+    assert (run_dir / "artifact_manifest.json").exists()
+    assert (run_dir / "audit_manifest.json").exists()
+    assert (run_dir / "modeling_report.json").exists()
+
+
+def test_verify_pipeline_determinism_synthetic(tmp_path):
+    out = tmp_path / "verify"
+    rc = main(
+        [
+            "verify-pipeline-determinism",
+            "--synthetic",
+            "--run-id-prefix",
+            "det",
+            "--fail-on-difference",
+            "--output-dir",
+            str(out),
+        ]
+    )
+    assert rc == 0  # two synthetic runs are identical
+    report = json.loads((out / "determinism_report.json").read_text(encoding="utf-8"))
+    assert report["overall"] == "identical"
+    assert report["research_only"] is True
+    assert (out / "determinism_report.md").exists()
+
+
 def test_evaluate_neutralized_ranking_synthetic(tmp_path):
     out = tmp_path / "neut"
     rc = main(

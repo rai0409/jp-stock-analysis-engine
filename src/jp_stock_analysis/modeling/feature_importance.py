@@ -138,6 +138,11 @@ def permutation_importance(
     is_synthetic: bool = False,
 ) -> ImportanceReport:
     """Rank-IC degradation when each feature is permuted (deterministic seed)."""
+    if not list(X):
+        return ImportanceReport(
+            "permutation", None, [], STATUS_METRIC_UNAVAILABLE, is_synthetic,
+            warnings=["no observations to permute"],
+        )
     base_predictions = model.predict(X)
     base_ic = _per_date_rank_ic(base_predictions, decision_dates, forward_returns)
     if base_ic is None:
