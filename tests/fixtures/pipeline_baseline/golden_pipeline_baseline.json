@@ -1,0 +1,511 @@
+{
+  "disclaimer": "This output is for analytical and self-directed research purposes. It is not personalized financial advice. The regression baseline detects unexpected pipeline output changes; it does not prove model validity or market performance.",
+  "research_only": true,
+  "schema_version": "pipeline_regression_baseline_v1",
+  "synthetic": true,
+  "synthetic_warning": "SYNTHETIC FIXTURE RESULTS — not real market evidence.",
+  "ignored_volatile_keys": [
+    "created_at_utc",
+    "started_at_utc",
+    "finished_at_utc",
+    "elapsed_seconds",
+    "absolute_path",
+    "run_directory",
+    "output_dir",
+    "run_id"
+  ],
+  "ignored_volatile_value_kinds": [
+    "run_id",
+    "fixed_timestamp",
+    "absolute_paths"
+  ],
+  "excluded_artifacts": [
+    "audit_manifest.json",
+    "audit_manifest.md",
+    "artifact_manifest.json",
+    "artifact_manifest.md",
+    "pipeline_summary.json",
+    "pipeline_summary.md"
+  ],
+  "artifact_count": 28,
+  "artifacts": [
+    {
+      "relative_path": "constraints/constrained_portfolio.json",
+      "artifact_type": "json",
+      "raw_sha256": "2062290bf4d18bded635ba486438cf86e12d5431cecfc520afb2bf51f1f3103d",
+      "canonical_sha256": "0af85c34d4d1d65fca529aef63137f6c3166f6814ebd8c499489666aec4225ba",
+      "json_top_level_keys": [
+        "applied_constraints",
+        "disclaimer",
+        "infeasible_reason",
+        "long",
+        "research_only",
+        "short",
+        "status",
+        "turnover_after",
+        "turnover_before",
+        "warnings"
+      ]
+    },
+    {
+      "relative_path": "dataset/modeling_dataset.csv",
+      "artifact_type": "csv",
+      "raw_sha256": "0fc6159794d2da8efb417c82b7ff6d00ed0f407bd02882657740c2afff5a3863",
+      "canonical_sha256": "0fc6159794d2da8efb417c82b7ff6d00ed0f407bd02882657740c2afff5a3863",
+      "line_count": 37,
+      "columns": [
+        "ticker",
+        "decision_date",
+        "disclosure_date",
+        "accounting_basis",
+        "sector",
+        "market",
+        "included",
+        "exclusion_reason",
+        "is_synthetic",
+        "missing_feature_count",
+        "earnings_yield",
+        "book_to_market",
+        "sales_to_price",
+        "roe",
+        "roa",
+        "operating_margin",
+        "equity_ratio",
+        "revenue_growth_yoy",
+        "net_income_growth_yoy",
+        "momentum_20d",
+        "momentum_60d",
+        "momentum_120d",
+        "volatility",
+        "max_drawdown",
+        "leverage",
+        "narrative_available",
+        "risk_keyword_count",
+        "sentiment_placeholder",
+        "excess_return_h20",
+        "excess_return_h5",
+        "excess_return_h60",
+        "forward_return_h20",
+        "forward_return_h5",
+        "forward_return_h60"
+      ],
+      "row_count": 36
+    },
+    {
+      "relative_path": "dataset/modeling_dataset_summary.json",
+      "artifact_type": "json",
+      "raw_sha256": "d77f17dd60e9d2268b27581bee31334b88cffe9fb71b43fe43106568feaa893c",
+      "canonical_sha256": "90f7dbbb1361c16bc698c0f539b4757e9f816f0e82d5354ac48688551ee4e92a",
+      "json_top_level_keys": [
+        "accounting_basis_distribution",
+        "decision_dates",
+        "disclaimer",
+        "eligible_observations",
+        "exclusions",
+        "feature_coverage",
+        "horizons",
+        "is_synthetic",
+        "label_coverage",
+        "synthetic_warning",
+        "total_observations"
+      ]
+    },
+    {
+      "relative_path": "ensemble/ensemble.json",
+      "artifact_type": "json",
+      "raw_sha256": "66c9a15cff27d39eba294e9ce66df496a2bcd9d5c6bf28c1bdd9fb009d37a04d",
+      "canonical_sha256": "599bcd88689664000f78a17dddd67c69600328b605004cfe465bf0c762917b70",
+      "json_top_level_keys": [
+        "rank_average",
+        "weighted_blend"
+      ]
+    },
+    {
+      "relative_path": "feature_importance/feature_importance.json",
+      "artifact_type": "json",
+      "raw_sha256": "1373da5a139c2fe24d24733adfc03d08c6a9d53f10b804cb75bc9debeedb92b0",
+      "canonical_sha256": "80c9dabd7c86ae3059d6b896963c40b7818e37b34c10a2e4a05843d0ec764c92",
+      "json_top_level_keys": [
+        "coefficient",
+        "permutation"
+      ]
+    },
+    {
+      "relative_path": "linear/elastic_net/model_metadata.json",
+      "artifact_type": "json",
+      "raw_sha256": "673a599fb5384ab3c4b9650a1b4c824695e142de92ded2425f6ba29ab9c6ae4f",
+      "canonical_sha256": "6affbf265e23a13f734f20d93275fb1809d00d4160d1992b3010014521f2126e",
+      "json_top_level_keys": [
+        "alpha",
+        "coefficients",
+        "converged",
+        "feature_means",
+        "feature_names",
+        "feature_scales",
+        "final_objective",
+        "fit_intercept",
+        "imputation_values",
+        "intercept",
+        "l1_ratio",
+        "max_coefficient_change",
+        "max_iter",
+        "model_version",
+        "n_features",
+        "n_iter",
+        "n_samples",
+        "objective_history",
+        "scaled_coefficients",
+        "selected_features",
+        "sparsity",
+        "standardize",
+        "status",
+        "target_mean",
+        "tol",
+        "warnings"
+      ]
+    },
+    {
+      "relative_path": "linear/elastic_net/predictions.csv",
+      "artifact_type": "csv",
+      "raw_sha256": "2f7d333ea208dcc4ac6f64aecf6d1b2d97f57711ce32dfb73e727d65445a515c",
+      "canonical_sha256": "2f7d333ea208dcc4ac6f64aecf6d1b2d97f57711ce32dfb73e727d65445a515c",
+      "line_count": 34,
+      "columns": [
+        "ticker",
+        "decision_date",
+        "prediction"
+      ],
+      "row_count": 33
+    },
+    {
+      "relative_path": "linear/ridge/model_metadata.json",
+      "artifact_type": "json",
+      "raw_sha256": "1f29fdda312a928b7b22d5ec9469a595beb8612a7a47c69c33b7939129f162a3",
+      "canonical_sha256": "90a92c50aab8616c2764ca16a628587e1293b3ca9308b75036de547b2556adcb",
+      "json_top_level_keys": [
+        "alpha",
+        "coefficients",
+        "feature_means",
+        "feature_names",
+        "feature_scales",
+        "fit_intercept",
+        "imputation_values",
+        "intercept",
+        "model_version",
+        "n_features",
+        "n_samples",
+        "scaled_coefficients",
+        "selected_features",
+        "sparsity",
+        "standardize",
+        "status",
+        "target_mean",
+        "warnings"
+      ]
+    },
+    {
+      "relative_path": "linear/ridge/predictions.csv",
+      "artifact_type": "csv",
+      "raw_sha256": "93d8e82d653ac9d043f2b688d85f1d8bb5c6c9fe7a1a4d110b856ee97f96b4ff",
+      "canonical_sha256": "93d8e82d653ac9d043f2b688d85f1d8bb5c6c9fe7a1a4d110b856ee97f96b4ff",
+      "line_count": 34,
+      "columns": [
+        "ticker",
+        "decision_date",
+        "prediction"
+      ],
+      "row_count": 33
+    },
+    {
+      "relative_path": "modeling_report.json",
+      "artifact_type": "json",
+      "raw_sha256": "b20398725a703c01bd13f1d7a27943c0768a9446e63b2745823078967615f3d9",
+      "canonical_sha256": "8b016b5357e893355a01ccb229fff65ad411850d8f7eae5392aa9a7d2a948450",
+      "json_top_level_keys": [
+        "commercial_validation",
+        "data_coverage",
+        "disclaimer",
+        "factor_score_distribution",
+        "limitations",
+        "mmc_style",
+        "model_comparison",
+        "model_diversity",
+        "neutralized_rank_metrics",
+        "no_look_ahead_status",
+        "optional_backends",
+        "portfolio_long_short",
+        "ranking_by_horizon",
+        "synthetic",
+        "synthetic_warning",
+        "walk_forward"
+      ]
+    },
+    {
+      "relative_path": "modeling_report.md",
+      "artifact_type": "md",
+      "raw_sha256": "7ce3133afe2664225c36e565a36e36d30712b4b3e75df857ae3b1453f90a726f",
+      "canonical_sha256": "7ce3133afe2664225c36e565a36e36d30712b4b3e75df857ae3b1453f90a726f",
+      "line_count": 105
+    },
+    {
+      "relative_path": "monitoring/monitoring.csv",
+      "artifact_type": "csv",
+      "raw_sha256": "28ec58a0c153ad45ee2ef7e7f4d73f2ffad099d4ac12b43850ea7cf56b3e2608",
+      "canonical_sha256": "28ec58a0c153ad45ee2ef7e7f4d73f2ffad099d4ac12b43850ea7cf56b3e2608",
+      "line_count": 4,
+      "columns": [
+        "metric",
+        "status",
+        "n_periods",
+        "mean",
+        "std",
+        "min",
+        "max",
+        "n_flagged"
+      ],
+      "row_count": 3
+    },
+    {
+      "relative_path": "monitoring/monitoring.json",
+      "artifact_type": "json",
+      "raw_sha256": "30b28dd77082ec244705e533726edf8a547927a32b4aa972d3d2138f64621436",
+      "canonical_sha256": "ecdb92569edc2a96dde47b7e68ee00177f72daa3c46726ec6f66139c22570ba8",
+      "json_top_level_keys": [
+        "disclaimer",
+        "is_synthetic",
+        "metrics",
+        "research_only",
+        "synthetic_warning",
+        "warnings",
+        "window",
+        "z_threshold"
+      ]
+    },
+    {
+      "relative_path": "monitoring/monitoring.md",
+      "artifact_type": "md",
+      "raw_sha256": "9442c3cac1f942050643f10404487b2b20bc7c48f02d63f00ea5dcf8d9c8d726",
+      "canonical_sha256": "9442c3cac1f942050643f10404487b2b20bc7c48f02d63f00ea5dcf8d9c8d726",
+      "line_count": 14
+    },
+    {
+      "relative_path": "neutralization/neutralized_metrics.csv",
+      "artifact_type": "csv",
+      "raw_sha256": "c65dab093c35beffb785ea5172f6eaa924914cebd24cbc4aa8b251b5f031f684",
+      "canonical_sha256": "c65dab093c35beffb785ea5172f6eaa924914cebd24cbc4aa8b251b5f031f684",
+      "line_count": 4,
+      "columns": [
+        "decision_date",
+        "neutralized_rank_ic"
+      ],
+      "row_count": 3
+    },
+    {
+      "relative_path": "neutralization/neutralized_metrics.json",
+      "artifact_type": "json",
+      "raw_sha256": "669f9a94de8f39dc71a1221ab524aecd2c9462a184b0aafdccee5275dc92cdda",
+      "canonical_sha256": "79628029e34cb514369d7926421708bdb029ba410893315739de1ec5f1430ada",
+      "json_top_level_keys": [
+        "disclaimer",
+        "exposure_columns",
+        "exposure_diagnostics",
+        "horizon",
+        "is_synthetic",
+        "model_label",
+        "neutralized_ic_mean",
+        "neutralized_ic_std",
+        "neutralized_icir",
+        "proportion",
+        "rank_ic_by_date",
+        "raw_ic_mean",
+        "research_only",
+        "skipped_exposures",
+        "status",
+        "synthetic_warning"
+      ],
+      "headline_metrics": {
+        "neutralized_ic_mean": -0.2636363636363636,
+        "raw_ic_mean": -0.06666666666666667
+      }
+    },
+    {
+      "relative_path": "neutralization/neutralized_metrics.md",
+      "artifact_type": "md",
+      "raw_sha256": "6efbd518a62f3374adc32d1390652d51706478c86a7c501ba8a17f79175c376e",
+      "canonical_sha256": "6efbd518a62f3374adc32d1390652d51706478c86a7c501ba8a17f79175c376e",
+      "line_count": 14
+    },
+    {
+      "relative_path": "portfolio/portfolio_metrics.csv",
+      "artifact_type": "csv",
+      "raw_sha256": "450cb3a49b619cd1b4a8e9615d4a20e8322eeb2ff1c057223217a271cdf04684",
+      "canonical_sha256": "450cb3a49b619cd1b4a8e9615d4a20e8322eeb2ff1c057223217a271cdf04684",
+      "line_count": 4,
+      "columns": [
+        "decision_date",
+        "status",
+        "spread_return",
+        "long_leg_return",
+        "short_leg_return",
+        "count_long",
+        "count_short",
+        "universe_count"
+      ],
+      "row_count": 3
+    },
+    {
+      "relative_path": "portfolio/portfolio_metrics.json",
+      "artifact_type": "json",
+      "raw_sha256": "4f906c9771e7c05f779ed4d1d0811113b776702f55ddc1778ecee956450b7ddf",
+      "canonical_sha256": "a2217b19c2fb06081afd521757ddbc32c7308edcdbe68926bcb12548e28c1a9a",
+      "json_top_level_keys": [
+        "commercial_validation",
+        "config",
+        "disclaimer",
+        "horizon",
+        "is_synthetic",
+        "model_label",
+        "per_date",
+        "research_only",
+        "spread_series",
+        "status",
+        "synthetic_warning",
+        "transaction_cost",
+        "turnover"
+      ],
+      "headline_metrics": {
+        "spread_series.sharpe_like": -0.06685525491336412,
+        "spread_series.mean_spread": -0.27573744475507717,
+        "spread_series.hit_rate": 0.6666666666666666
+      }
+    },
+    {
+      "relative_path": "portfolio/portfolio_metrics.md",
+      "artifact_type": "md",
+      "raw_sha256": "5f78798b390e2ba5e4f1b5edf471a0fc49a906579879dca407af4ee40d3fbefe",
+      "canonical_sha256": "5f78798b390e2ba5e4f1b5edf471a0fc49a906579879dca407af4ee40d3fbefe",
+      "line_count": 17
+    },
+    {
+      "relative_path": "ranking/ranking_metrics.csv",
+      "artifact_type": "csv",
+      "raw_sha256": "9de7dcaa757d9c30003c3e9a734e108ba14c8927323680b8ebf6067bd153e241",
+      "canonical_sha256": "9de7dcaa757d9c30003c3e9a734e108ba14c8927323680b8ebf6067bd153e241",
+      "line_count": 4,
+      "columns": [
+        "horizon",
+        "ic_mean",
+        "ic_std",
+        "icir",
+        "sector_neutral_ic_mean",
+        "quantile_spread_mean",
+        "hit_rate_top_positive",
+        "hit_rate_top_above_median",
+        "coverage_count",
+        "missing_label_count"
+      ],
+      "row_count": 3
+    },
+    {
+      "relative_path": "ranking/ranking_metrics.json",
+      "artifact_type": "json",
+      "raw_sha256": "05c138ca97d526cc4d0bb8a6bfe4666d20f5cc4069238e45a3a192cf46dd427c",
+      "canonical_sha256": "49c25aebe1a7dc4a80c7f088a938d14bd12805b55a0c259e645a9dbdac1ea952",
+      "json_top_level_keys": [
+        "disclaimer",
+        "grade_dispersion",
+        "horizons",
+        "is_synthetic",
+        "model_label",
+        "n_quantiles",
+        "synthetic_warning"
+      ],
+      "headline_metrics": {
+        "horizons.0.ic_mean": -0.06666666666666667,
+        "horizons.0.icir": -0.10600963242025328,
+        "horizons.0.coverage_count": 33
+      }
+    },
+    {
+      "relative_path": "ranking/ranking_metrics.md",
+      "artifact_type": "md",
+      "raw_sha256": "a388c465b4b5a2659850a3a5b8e6308bcba711e08f5273ca30796ad310e240f5",
+      "canonical_sha256": "a388c465b4b5a2659850a3a5b8e6308bcba711e08f5273ca30796ad310e240f5",
+      "line_count": 15
+    },
+    {
+      "relative_path": "readiness/forward_readiness.json",
+      "artifact_type": "json",
+      "raw_sha256": "801ff77a2381cbc6ba9fae9c96b95d5e4897660f671cd1ffe31a4071fc24a0f5",
+      "canonical_sha256": "566876422a68245bb7d150ce697f42b8f52b544c9b59c90d7b5449f21335dac3",
+      "json_top_level_keys": [
+        "blocked_reason_counts",
+        "bundle_disclosure_date",
+        "disclaimer",
+        "eligible_ticker_count",
+        "eligible_tickers",
+        "horizons",
+        "overall_status",
+        "per_ticker",
+        "ticker_count"
+      ],
+      "headline_metrics": {
+        "overall_status": "eligible",
+        "eligible_ticker_count": 11
+      }
+    },
+    {
+      "relative_path": "readiness/forward_readiness.md",
+      "artifact_type": "md",
+      "raw_sha256": "e3efec6762a7495239fdeb913b099b096119bebdfaf6aea9c24a070784e5724f",
+      "canonical_sha256": "e3efec6762a7495239fdeb913b099b096119bebdfaf6aea9c24a070784e5724f",
+      "line_count": 25
+    },
+    {
+      "relative_path": "stability/model_stability.csv",
+      "artifact_type": "csv",
+      "raw_sha256": "5ae3480c0c2bb9e16578a579a0e30d876ccd55e28c699b6d7d92c259146cd58b",
+      "canonical_sha256": "5ae3480c0c2bb9e16578a579a0e30d876ccd55e28c699b6d7d92c259146cd58b",
+      "line_count": 5,
+      "columns": [
+        "metric",
+        "n",
+        "mean",
+        "std",
+        "min",
+        "max",
+        "cv",
+        "positive_period_rate",
+        "status"
+      ],
+      "row_count": 4
+    },
+    {
+      "relative_path": "stability/model_stability.json",
+      "artifact_type": "json",
+      "raw_sha256": "aab6aee94924364b613603bcb8d4dc99360ce9a3369762100b5bbe807f9c5b8b",
+      "canonical_sha256": "df651ca4d3dd37912e42281be5d9121bc525f94b06ddbce0bfb407be34ddfd42",
+      "json_top_level_keys": [
+        "disclaimer",
+        "fold_stability",
+        "horizon",
+        "is_synthetic",
+        "n_folds",
+        "research_only",
+        "seed_stability",
+        "synthetic_warning",
+        "warnings"
+      ],
+      "headline_metrics": {
+        "n_folds": 2
+      }
+    },
+    {
+      "relative_path": "stability/model_stability.md",
+      "artifact_type": "md",
+      "raw_sha256": "e0c3a7d8bf1c4d3b568447ce8622095fae09241104e6124077902b4d805feb68",
+      "canonical_sha256": "e0c3a7d8bf1c4d3b568447ce8622095fae09241104e6124077902b4d805feb68",
+      "line_count": 17
+    }
+  ]
+}

@@ -85,6 +85,14 @@ constraints / monitoring options mirror the standalone commands
 `--max-weight-per-name`, `--max-sector-weight`, `--max-participation-rate`,
 `--min-adv`, `--monitoring-window`, `--monitoring-threshold`).
 
+## Regression baseline (vs the determinism gate)
+
+The determinism gate (`verify-pipeline-determinism`) checks that *repeated runs
+now* are byte-identical. The **regression baseline** (`check-pipeline-regression`,
+see `docs/pipeline_regression.md`) checks *future changes* against a committed
+golden reference — catching a code change that alters a metric or artifact. Both
+are reproducibility checks, not model-validity checks.
+
 ## Recommended real-data run order
 
 1. regenerate / verify the real topix1000 bundle (point-in-time fundamentals +

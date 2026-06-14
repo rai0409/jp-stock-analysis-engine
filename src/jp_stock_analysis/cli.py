@@ -91,6 +91,16 @@ from jp_stock_analysis.modeling.portfolio_metrics import (
     write_portfolio_outputs,
 )
 from jp_stock_analysis.modeling.ranking_metrics import evaluate_ranking, write_ranking_outputs
+from jp_stock_analysis.modeling.regression_baseline import (
+    GOLDEN_RUN_ID,
+    GOLDEN_TIMESTAMP,
+    capture_baseline,
+    compare_to_baseline,
+    load_baseline,
+    run_golden_synthetic_pipeline,
+    write_baseline,
+    write_regression_report,
+)
 from jp_stock_analysis.modeling.report import (
     build_modeling_report,
     write_modeling_report_outputs,
@@ -711,6 +721,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="exit nonzero if the two runs differ (default: report only)",
     )
     _add_pipeline_config_args(verify)
+
+    regression = subparsers.add_parser(
+        "check-pipeline-regression",
+        help="run the pipeline and compare it against a committed golden baseline "
+        "(unexpected change detection); research-only",
+    )
+    _add_modeling_input_args(regression)
+    regression.add_argument(
+        "--baseline-path",
+        default="tests/fixtures/pipeline_baseline/golden_pipeline_baseline.json",
+        help="path to the golden baseline JSON",
+    )
+    regression.add_argument("--run-id", default=GOLDEN_RUN_ID)
+    regression.add_argument("--fixed-timestamp", default=GOLDEN_TIMESTAMP)
+    regression.add_argument("--adv", default=None, help="optional ADV CSV (ticker,adv)")
+    regression.add_argument(
+        "--update-baseline",
+        action="store_true",
+        help="INTENTIONALLY regenerate the golden baseline from this run (reviewed)",
+    )
+    regression.add_argument("--fail-on-regression", action="store_true")
+    regression.add_argument(
+        "--strict-new-artifacts",
+        action="store_true",
+        help="treat an unexpected new artifact as a regression",
+    )
     return parser
 
 
@@ -1515,6 +1551,52 @@ def _run_verify_pipeline_determinism(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_check_pipeline_regression(args: argparse.Namespace) -> int:
+    try:
+        if args.synthetic:
+            run_dir = run_golden_synthetic_pipeline(
+                args.output_dir, run_id=args.run_id, fixed_timestamp=args.fixed_timestamp
+            )
+        else:
+            dataset, prices, disclosure_date, input_files, adv = _pipeline_inputs(args)
+            run_pipeline(
+                dataset, prices, output_dir=args.output_dir, run_id=args.run_id,
+                fixed_timestamp=args.fixed_timestamp, disclosure_date=disclosure_date,
+                input_files=input_files, adv=adv, git_commit=current_git_commit("."),
+                version=project_version(),
+            )
+            run_dir = Path(args.output_dir) / args.run_id
+
+        if args.update_baseline:
+            baseline = capture_baseline(
+                run_dir, run_id=args.run_id, fixed_timestamp=args.fixed_timestamp,
+                is_synthetic=args.synthetic,
+            )
+            write_baseline(baseline, args.baseline_path)
+            print(
+                f"warning: INTENTIONAL baseline update written to {args.baseline_path} "
+                "(review before committing)",
+                file=sys.stderr,
+            )
+        else:
+            baseline = load_baseline(args.baseline_path)
+        report = compare_to_baseline(
+            run_dir, baseline, run_id=args.run_id, fixed_timestamp=args.fixed_timestamp,
+            strict_new_artifacts=args.strict_new_artifacts,
+        )
+        paths = write_regression_report(report, args.output_dir)
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Regression check: detected={report['regression_detected']} "
+        f"({report['counts']}). Report: {paths['json_path']}"
+    )
+    if args.fail_on_regression and report["regression_detected"]:
+        return 2
+    return 0
+
+
 def _load_metrics_csv(path: str, period_column: str):
     import csv as _csv
 
@@ -1596,6 +1678,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_run_modeling_pipeline(args)
     if args.command == "verify-pipeline-determinism":
         return _run_verify_pipeline_determinism(args)
+    if args.command == "check-pipeline-regression":
+        return _run_check_pipeline_regression(args)
     if args.command != "analyze":
         return 2
     if args.provider == "local" and not args.prices:

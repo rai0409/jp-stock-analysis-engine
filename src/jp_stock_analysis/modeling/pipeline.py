@@ -186,6 +186,7 @@ def run_pipeline(
     adv: Mapping[str, float] | None = None,
     git_commit: str | None = None,
     version: str | None = None,
+    baseline: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the full pipeline into ``output_dir/run_id`` and return the summary."""
     config = config or PipelineConfig()
@@ -501,6 +502,31 @@ def run_pipeline(
     (run_dir / "pipeline_summary.md").write_text(_summary_markdown(summary), encoding="utf-8")
     record("build_pipeline_summary", STATUS_OK, outputs=["pipeline_summary.json",
                                                          "pipeline_summary.md"])
+    # optional regression hook: compare against a supplied golden baseline and
+    # embed a compact summary (pipeline_summary is excluded from baseline tracking,
+    # so this never causes a self-referential regression).
+    if baseline is not None:
+        from jp_stock_analysis.modeling.regression_baseline import compare_to_baseline
+
+        comparison = compare_to_baseline(
+            run_dir, baseline, run_id=run_id, fixed_timestamp=fixed_timestamp
+        )
+        summary["regression_summary"] = {
+            "regression_detected": comparison["regression_detected"],
+            "counts": comparison["counts"],
+            "total_artifacts": comparison["total_artifacts"],
+            "regression_artifacts": comparison["regression_artifacts"],
+        }
+        record(
+            "compare_regression_baseline",
+            STATUS_BLOCKED if comparison["regression_detected"] else STATUS_OK,
+            warnings=(
+                ["pipeline regression detected vs golden baseline"]
+                if comparison["regression_detected"]
+                else []
+            ),
+        )
+
     # rewrite summary to include the final step (summary lists itself)
     summary["steps"] = [s.to_dict() for s in steps]
     summary["step_count"] = len(steps)

@@ -283,6 +283,84 @@ def test_verify_pipeline_determinism_synthetic(tmp_path):
     assert (out / "determinism_report.md").exists()
 
 
+def test_check_pipeline_regression_synthetic_no_regression(tmp_path):
+    out = tmp_path / "reg"
+    rc = main(
+        [
+            "check-pipeline-regression",
+            "--synthetic",
+            "--fail-on-regression",
+            "--output-dir",
+            str(out),
+        ]
+    )
+    assert rc == 0  # committed fixture matches a fresh synthetic run
+    report = json.loads((out / "pipeline_regression_report.json").read_text(encoding="utf-8"))
+    assert report["regression_detected"] is False
+    assert report["research_only"] is True
+    assert (out / "pipeline_regression_report.md").exists()
+
+
+def test_check_pipeline_regression_fails_on_controlled_regression(tmp_path):
+    # build a baseline from a non-default config, then check against the default
+    # committed-style baseline path that does NOT contain that artifact set
+    baseline_path = tmp_path / "baseline.json"
+    rc_update = main(
+        [
+            "check-pipeline-regression",
+            "--synthetic",
+            "--update-baseline",
+            "--baseline-path",
+            str(baseline_path),
+            "--output-dir",
+            str(tmp_path / "cap"),
+        ]
+    )
+    assert rc_update == 0
+    # corrupt the baseline's recorded metric so a fresh run is a regression
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    for artifact in baseline["artifacts"]:
+        if artifact["relative_path"] == "ranking/ranking_metrics.json":
+            artifact["canonical_sha256"] = "0" * 64  # force a mismatch
+    baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+    rc = main(
+        [
+            "check-pipeline-regression",
+            "--synthetic",
+            "--baseline-path",
+            str(baseline_path),
+            "--fail-on-regression",
+            "--output-dir",
+            str(tmp_path / "chk"),
+        ]
+    )
+    assert rc == 2  # regression -> nonzero exit
+    report = json.loads(
+        (tmp_path / "chk" / "pipeline_regression_report.json").read_text(encoding="utf-8")
+    )
+    assert report["regression_detected"] is True
+
+
+def test_check_pipeline_regression_update_baseline_writes(tmp_path):
+    baseline_path = tmp_path / "golden.json"
+    rc = main(
+        [
+            "check-pipeline-regression",
+            "--synthetic",
+            "--update-baseline",
+            "--baseline-path",
+            str(baseline_path),
+            "--output-dir",
+            str(tmp_path / "out"),
+        ]
+    )
+    assert rc == 0
+    assert baseline_path.exists()
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    assert baseline["schema_version"] == "pipeline_regression_baseline_v1"
+    assert baseline["synthetic"] is True
+
+
 def test_evaluate_neutralized_ranking_synthetic(tmp_path):
     out = tmp_path / "neut"
     rc = main(
