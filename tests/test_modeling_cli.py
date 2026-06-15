@@ -482,6 +482,59 @@ def test_verify_baseline_lineage_fails_on_tampered_ledger(tmp_path):
     assert rc == 2  # tampering detected -> nonzero
 
 
+def test_export_audit_bundle_writes_expected_manifest(tmp_path):
+    out = tmp_path / "bundle"
+    rc = main(
+        [
+            "export-audit-bundle",
+            "--synthetic",
+            "--bundle-id",
+            "cli-fixed",
+            "--fixed-timestamp",
+            "1970-01-01T00:00:00Z",
+            "--output-dir",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    manifest = json.loads((out / "audit_bundle_manifest.json").read_text(encoding="utf-8"))
+    paths = {entry["relative_path"] for entry in manifest["bundle_contents"]}
+    assert "baseline/golden_pipeline_baseline.json" in paths
+    assert "ledger/baseline_history.jsonl" in paths
+    assert manifest["bundle_id"] == "cli-fixed"
+
+
+def test_verify_audit_bundle_cli_passes_and_writes_outputs(tmp_path):
+    bundle = tmp_path / "bundle"
+    out = tmp_path / "verify"
+    assert main(["export-audit-bundle", "--synthetic", "--output-dir", str(bundle)]) == 0
+    rc = main(
+        [
+            "verify-audit-bundle",
+            "--bundle-dir",
+            str(bundle),
+            "--output-dir",
+            str(out),
+            "--fail-on-invalid",
+        ]
+    )
+    assert rc == 0
+    report = json.loads((out / "audit_bundle_verification.json").read_text(encoding="utf-8"))
+    assert report["status"] == "valid"
+    assert (out / "audit_bundle_verification.md").exists()
+
+
+def test_verify_audit_bundle_cli_fail_on_invalid_exits_nonzero(tmp_path):
+    bundle = tmp_path / "bundle"
+    assert main(["export-audit-bundle", "--synthetic", "--output-dir", str(bundle)]) == 0
+    baseline = bundle / "baseline/golden_pipeline_baseline.json"
+    payload = json.loads(baseline.read_text(encoding="utf-8"))
+    payload["artifact_count"] = 999
+    baseline.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    rc = main(["verify-audit-bundle", "--bundle-dir", str(bundle), "--fail-on-invalid"])
+    assert rc == 2
+
+
 def test_promote_with_ledger_appends_on_approval(tmp_path):
     import shutil
 

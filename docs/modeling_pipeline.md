@@ -51,6 +51,7 @@ point-in-time fundamentals/prices arrive, validation can run immediately.
 | `modeling/regression_baseline.py` | golden baseline capture + change detection (see `docs/pipeline_regression.md`) |
 | `modeling/run_compare.py` | run A-vs-B comparison + explicit baseline promotion (see `docs/run_comparison.md`) |
 | `modeling/baseline_history.py` | append-only, hash-chained promotion ledger (see `docs/baseline_history.md`) |
+| `modeling/audit_bundle.py` | self-contained audit bundle export/verification (see `docs/audit_bundle.md`) |
 | `modeling/report.py` | full offline modeling report |
 | `modeling/fixtures.py` | deterministic synthetic bundle (SYNTHETIC ONLY) |
 
@@ -91,6 +92,8 @@ python -m jp_stock_analysis.cli check-pipeline-regression    --synthetic --fail-
 python -m jp_stock_analysis.cli compare-pipeline-runs        --run-a out/a/run --run-b out/b/run --output-dir out/cmp
 python -m jp_stock_analysis.cli verify-baseline-lineage      --fail-on-invalid
 python -m jp_stock_analysis.cli show-baseline-history        --output-dir out/hist
+python -m jp_stock_analysis.cli export-audit-bundle          --synthetic --fixed-timestamp 1970-01-01T00:00:00Z --output-dir out/audit_bundle
+python -m jp_stock_analysis.cli verify-audit-bundle          --bundle-dir out/audit_bundle --fail-on-invalid
 ```
 
 The `modeling-report` long-short and neutralization sections accept
@@ -136,7 +139,11 @@ python -m jp_stock_analysis.cli modeling-report \
 
 Or run all of the above deterministically in one pass with
 `run-modeling-pipeline` and reproduce-check it with `verify-pipeline-determinism`
-(see `docs/pipeline_runner.md`).
+(see `docs/pipeline_runner.md`). Package the current audit state with
+`export-audit-bundle` and verify it with `verify-audit-bundle`; this checks
+manifest/content fingerprints, ledger chain integrity, baseline-vs-ledger-head
+matching, and the overall bundle fingerprint. It is an internal consistency and
+tamper-evidence check, not a predictive-performance claim.
 
 ## Optional dependencies
 
@@ -151,3 +158,6 @@ and the test-suite still passes — they are never required for a minimal instal
 - Real validation needs point-in-time disclosure dates and adjusted-close prices,
   and must pass strict no-look-ahead first.
 - Narrative features are placeholders until real extraction exists.
+- Real-data audit bundles require `check-forward-readiness=ELIGIBLE` before any
+  predictive interpretation; P0 strict no-look-ahead remains required before
+  predictive claims.

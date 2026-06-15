@@ -2,6 +2,7 @@
 
 **Modules:** `pipeline.py`, `determinism.py`, `audit.py` (artifact manifest)
 **CLI:** `run-modeling-pipeline`, `verify-pipeline-determinism`
+**Audit bundle:** see `docs/audit_bundle.md`
 
 > This output is for analytical and self-directed research purposes. It is not
 > personalized financial advice.
@@ -100,6 +101,13 @@ approved promotion can append a tamper-evident entry to the hash-chained
 **baseline history ledger** (`show-baseline-history` / `verify-baseline-lineage`;
 see `docs/baseline_history.md`).
 
+`export-audit-bundle` packages the current golden baseline, baseline history
+ledger, optional promotion records, and optional determinism/regression reports
+into a self-contained audit artifact. `verify-audit-bundle` checks the internal
+fingerprints, ledger chain, baseline-vs-ledger-head match, and overall bundle
+fingerprint. A bundle is a reproducibility artifact, not a performance claim;
+synthetic bundles are not market evidence.
+
 ## Recommended real-data run order
 
 1. regenerate / verify the real topix1000 bundle (point-in-time fundamentals +
@@ -109,8 +117,10 @@ see `docs/baseline_history.md`).
 4. `run-modeling-pipeline` (with `--adv` for real liquidity constraints).
 5. `verify-pipeline-determinism`.
 6. review the audit manifest.
-7. review the modeling report.
-8. only then consider further validation.
+7. run `check-pipeline-regression`.
+8. export and verify an audit bundle.
+9. review the modeling report.
+10. only then consider further validation.
 
 P0 strict no-look-ahead remains required before any predictive claim. Nothing
 here constitutes a predictive or trading claim until that validation succeeds on

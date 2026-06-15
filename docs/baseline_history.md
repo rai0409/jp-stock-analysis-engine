@@ -3,6 +3,7 @@
 **Module:** `baseline_history.py`
 **CLI:** `show-baseline-history`, `verify-baseline-lineage` (+ `promote-pipeline-baseline --ledger-path`)
 **Seed fixture:** `tests/fixtures/pipeline_baseline/baseline_history.jsonl`
+**Audit bundle:** see `docs/audit_bundle.md`
 
 > This output is for analytical and self-directed research purposes. It is not
 > personalized financial advice.
@@ -42,6 +43,11 @@ required fields present, no secret-like fields, no absolute paths, no duplicate
 hashes, and a valid genesis parent. It returns `valid` / `invalid` with an
 explicit `issues` list, entry count, head hash, and first/last entry metadata.
 
+`verify-audit-bundle` repeats this ledger-chain verification inside a packaged
+bundle and also requires the bundled golden baseline fingerprint to match the
+ledger head. A valid bundle proves internal consistency and tamper evidence only;
+it does not prove predictive validity or market performance.
+
 ## Promotion → ledger
 
 `promote-pipeline-baseline --ledger-path <ledger>` appends exactly one entry
@@ -71,6 +77,14 @@ python -m jp_stock_analysis.cli promote-pipeline-baseline \
     --require-approval --approve \
     --ledger-path tests/fixtures/pipeline_baseline/baseline_history.jsonl \
     --output-dir out/promo
+
+# package baseline + ledger into a self-contained audit bundle
+python -m jp_stock_analysis.cli export-audit-bundle --synthetic \
+    --fixed-timestamp 1970-01-01T00:00:00Z --output-dir out/audit_bundle
+
+# verify bundle fingerprints, ledger chain, and baseline/ledger consistency
+python -m jp_stock_analysis.cli verify-audit-bundle \
+    --bundle-dir out/audit_bundle --fail-on-invalid
 ```
 
 ## Reviewing ledger changes in code review

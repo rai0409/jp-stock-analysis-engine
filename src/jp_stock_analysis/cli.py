@@ -56,6 +56,11 @@ from jp_stock_analysis.modeling.audit import (
     project_version,
     write_audit_manifest_outputs,
 )
+from jp_stock_analysis.modeling.audit_bundle import (
+    export_audit_bundle,
+    verify_audit_bundle,
+    write_audit_bundle_verification_outputs,
+)
 from jp_stock_analysis.modeling.baseline_history import (
     summarize_baseline_history,
     verify_baseline_history,
@@ -836,6 +841,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lineage.add_argument("--output-dir", default=None)
     lineage.add_argument("--fail-on-invalid", action="store_true")
+
+    export_bundle = subparsers.add_parser(
+        "export-audit-bundle",
+        help="package the current baseline, ledger, and optional reports into a "
+        "self-contained reproducibility audit bundle; research-only",
+    )
+    export_bundle.add_argument("--output-dir", required=True)
+    export_bundle.add_argument("--bundle-id", default=None)
+    export_bundle.add_argument("--fixed-timestamp", default=None)
+    export_bundle.add_argument(
+        "--baseline-path",
+        default="tests/fixtures/pipeline_baseline/golden_pipeline_baseline.json",
+    )
+    export_bundle.add_argument(
+        "--ledger-path",
+        default="tests/fixtures/pipeline_baseline/baseline_history.jsonl",
+    )
+    export_bundle.add_argument("--promotion-record", default=None)
+    export_bundle.add_argument("--promotion-record-dir", default=None)
+    export_bundle.add_argument("--pipeline-run-dir", default=None)
+    export_bundle.add_argument("--determinism-report", default=None)
+    export_bundle.add_argument("--regression-report", default=None)
+    export_bundle.add_argument("--synthetic", action="store_true")
+    export_bundle.add_argument("--include-fresh-checks", action="store_true")
+
+    verify_bundle = subparsers.add_parser(
+        "verify-audit-bundle",
+        help="verify audit bundle manifest fingerprints, ledger lineage, and "
+        "baseline/ledger consistency; research-only",
+    )
+    verify_bundle.add_argument("--bundle-dir", required=True)
+    verify_bundle.add_argument("--output-dir", default=None)
+    verify_bundle.add_argument("--fail-on-invalid", action="store_true")
     return parser
 
 
@@ -1781,6 +1819,54 @@ def _run_verify_baseline_lineage(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_export_audit_bundle(args: argparse.Namespace) -> int:
+    try:
+        manifest = export_audit_bundle(
+            args.output_dir,
+            baseline_path=args.baseline_path,
+            ledger_path=args.ledger_path,
+            promotion_record_path=args.promotion_record,
+            promotion_record_dir=args.promotion_record_dir,
+            pipeline_run_dir=args.pipeline_run_dir,
+            determinism_report_path=args.determinism_report,
+            regression_report_path=args.regression_report,
+            synthetic=args.synthetic,
+            fixed_timestamp=args.fixed_timestamp,
+            bundle_id=args.bundle_id,
+            include_fresh_checks=args.include_fresh_checks,
+        )
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Audit bundle exported: {args.output_dir} "
+        f"({len(manifest['bundle_contents'])} files, "
+        f"fingerprint={manifest['overall_bundle_fingerprint'][:12]}...)."
+    )
+    return 0
+
+
+def _run_verify_audit_bundle(args: argparse.Namespace) -> int:
+    try:
+        report = verify_audit_bundle(
+            args.bundle_dir, fail_on_invalid=args.fail_on_invalid
+        )
+        if args.output_dir:
+            write_audit_bundle_verification_outputs(report, args.output_dir)
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Audit bundle: {report['status'].upper()} "
+        f"({report['file_count']} files, {len(report['issues'])} issue(s))."
+    )
+    for issue in report["issues"]:
+        print(f"  - {issue}", file=sys.stderr)
+    if args.fail_on_invalid and report["status"] != "valid":
+        return 2
+    return 0
+
+
 def _load_metrics_csv(path: str, period_column: str):
     import csv as _csv
 
@@ -1872,6 +1958,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_show_baseline_history(args)
     if args.command == "verify-baseline-lineage":
         return _run_verify_baseline_lineage(args)
+    if args.command == "export-audit-bundle":
+        return _run_export_audit_bundle(args)
+    if args.command == "verify-audit-bundle":
+        return _run_verify_audit_bundle(args)
     if args.command != "analyze":
         return 2
     if args.provider == "local" and not args.prices:
