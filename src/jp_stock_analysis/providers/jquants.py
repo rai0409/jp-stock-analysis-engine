@@ -149,6 +149,13 @@ def _first_value(row: dict[str, Any], names: tuple[str, ...]) -> Any:
     return None
 
 
+def _normalize_jquants_code(value: Any) -> str:
+    code = str(value or "").strip()
+    if len(code) == 5 and code.endswith("0") and code[:4].isdigit():
+        return code[:4]
+    return code
+
+
 def _map_daily_quote(row: dict[str, Any], ticker: str) -> PriceBar | None:
     # V2 (/equities/bars/daily) uses abbreviated names; fall back to V1 names.
     bar_date = _to_date(_first_value(row, ("Date",)))
@@ -241,6 +248,13 @@ class JQuantsProvider:
         """Deterministic cache file location for one dataset/code pair."""
         return self.cache_dir / dataset / f"{code}.json"
 
+    def date_cache_path(self, dataset: str, target_date: date | str) -> Path:
+        """Deterministic cache file location for one dataset/date query."""
+        day = _to_date(target_date)
+        if day is None:
+            raise ProviderError(f"invalid J-Quants date query: {target_date!r}")
+        return self.cache_dir / f"{dataset}_by_date" / f"{day.isoformat()}.json"
+
     def get_prices(
         self,
         ticker: str,
@@ -260,6 +274,34 @@ class JQuantsProvider:
         if end is not None:
             bars = [bar for bar in bars if bar.date <= end]
         bars.sort(key=lambda bar: bar.date)
+        return bars
+
+    def fetch_daily_bars_by_date(
+        self,
+        target_date: date | str,
+        *,
+        allow_network: bool = False,
+    ) -> list[PriceBar]:
+        """Fetch/cache all daily bars for one trading date.
+
+        Offline by default: cached ``daily_quotes_by_date/YYYY-MM-DD.json`` rows
+        are used when present. A live date query is made only when
+        ``allow_network`` is true. Rows are mapped with J-Quants ``Code``
+        normalized from the V2 5-digit form (e.g. ``72030`` -> ``7203``).
+        """
+        day = _to_date(target_date)
+        if day is None:
+            raise ProviderError(f"invalid J-Quants date query: {target_date!r}")
+        rows = self._load_rows_by_date(
+            "daily_quotes", day, allow_network=allow_network
+        )
+        bars = [
+            bar
+            for row in rows
+            if (bar := _map_daily_quote(row, _normalize_jquants_code(row.get("Code"))))
+            is not None
+        ]
+        bars.sort(key=lambda bar: (bar.ticker, bar.date))
         return bars
 
     def get_statements(self, ticker: str) -> list[FinancialStatement]:
@@ -293,7 +335,39 @@ class JQuantsProvider:
         path.write_text(json.dumps(rows, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return rows
 
+    def _load_rows_by_date(
+        self,
+        dataset: str,
+        target_date: date,
+        *,
+        allow_network: bool,
+    ) -> list[dict[str, Any]]:
+        path = self.date_cache_path(dataset, target_date)
+        if path.exists():
+            try:
+                rows = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                raise ProviderError(f"invalid J-Quants cache file {path}: {exc}") from exc
+            if not isinstance(rows, list):
+                raise ProviderError(f"invalid J-Quants cache file {path}: expected a JSON list")
+            return rows
+        if not allow_network:
+            raise ProviderError(
+                f"no cached J-Quants {dataset} data for {target_date.isoformat()} "
+                f"(expected {path}); date mode never fetches unless --allow-network is set."
+            )
+        rows = self._fetch_rows_by_query(dataset, {"date": target_date.isoformat()})
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(rows, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return rows
+
     def _fetch_rows(self, dataset: str, code: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        query = {"code": code, **{k: v for k, v in params.items() if v}}
+        return self._fetch_rows_by_query(dataset, query)
+
+    def _fetch_rows_by_query(
+        self, dataset: str, query_params: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         if not self._api_key:
             raise ProviderError(
                 f"live J-Quants fetch requested but the {ENV_API_KEY} environment "
@@ -303,7 +377,7 @@ class JQuantsProvider:
         rows: list[dict[str, Any]] = []
         pagination_key: str | None = None
         while True:
-            query = {"code": code, **{k: v for k, v in params.items() if v}}
+            query = {k: v for k, v in query_params.items() if v}
             if pagination_key:
                 query["pagination_key"] = pagination_key
             url = f"{self.endpoint_url(dataset)}?{urllib.parse.urlencode(query)}"

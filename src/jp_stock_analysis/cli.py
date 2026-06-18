@@ -48,6 +48,11 @@ from jp_stock_analysis.analysis.sector_relative import attach_sector_relative
 from jp_stock_analysis.analysis.signal_engine import generate_signals
 from jp_stock_analysis.analysis.valuation import analyze_valuation
 from jp_stock_analysis.config import AnalysisConfig
+from jp_stock_analysis.data.incremental_prices import (
+    update_incremental_price_store,
+    verify_price_store,
+    write_reports,
+)
 from jp_stock_analysis.errors import JPStockAnalysisError, ProviderError
 from jp_stock_analysis.modeling.audit import (
     build_audit_manifest,
@@ -495,6 +500,38 @@ def build_parser() -> argparse.ArgumentParser:
         help="permit a live J-Quants fetch when the cache is missing "
         "(requires JQUANTS_API_KEY); default is cache-only / offline",
     )
+
+    incremental = subparsers.add_parser(
+        "fetch-jquants-prices-incremental",
+        help="incrementally build a local J-Quants price store by date "
+        "(offline/cache-safe unless --allow-network is explicit); research-only",
+    )
+    incremental.add_argument("--universe-file", required=True)
+    incremental.add_argument("--store-dir", required=True)
+    incremental.add_argument("--start-date", required=True)
+    incremental.add_argument("--end-date", default=None)
+    incremental.add_argument("--mode", default="date", choices=["date"])
+    incremental.add_argument(
+        "--price-field",
+        required=True,
+        choices=["adjusted_close", "close"],
+        help="adjusted_close is recommended; no raw-close fallback is ever applied",
+    )
+    incremental.add_argument("--cache-dir", default=".cache/jquants")
+    incremental.add_argument("--allow-network", action="store_true")
+    incremental.add_argument("--sleep-seconds", default=13.0, type=float)
+    incremental.add_argument("--max-retries", default=8, type=int)
+    incremental.add_argument("--backoff-multiplier", default=2.0, type=float)
+    incremental.add_argument("--continue-on-date-error", action="store_true")
+    incremental.add_argument("--universe-name", default=None)
+
+    verify_store = subparsers.add_parser(
+        "verify-price-store",
+        help="verify local incremental price store coverage and h5/h20/h60 "
+        "decision-date eligibility; research-only",
+    )
+    verify_store.add_argument("--store-dir", required=True)
+    verify_store.add_argument("--universe-file", default=None)
 
     readiness = subparsers.add_parser(
         "check-forward-readiness",
@@ -1060,6 +1097,56 @@ def _run_fetch_jquants_prices(args: argparse.Namespace) -> int:
     print(
         f"Exported {result.total_rows_written} rows ({result.price_field}) for "
         f"{len(result.tickers)} ticker(s) -> {result.output_path}"
+    )
+    return 0
+
+
+def _run_fetch_jquants_prices_incremental(args: argparse.Namespace) -> int:
+    try:
+        from_date = date.fromisoformat(args.start_date)
+        to_date = date.fromisoformat(args.end_date) if args.end_date else None
+        provider = JQuantsProvider(cache_dir=args.cache_dir, live=args.allow_network)
+        result = update_incremental_price_store(
+            provider,
+            universe_file=args.universe_file,
+            store_dir=args.store_dir,
+            start_date=from_date,
+            end_date=to_date,
+            price_field=args.price_field,
+            allow_network=args.allow_network,
+            mode=args.mode,
+            sleep_seconds=args.sleep_seconds,
+            max_retries=args.max_retries,
+            backoff_multiplier=args.backoff_multiplier,
+            continue_on_date_error=args.continue_on_date_error,
+            universe_name=args.universe_name,
+        )
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    for warning in result.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    print(
+        f"Incremental J-Quants store updated: rows={result.row_count}, "
+        f"tickers={result.ticker_count}, added={result.rows_added}, "
+        f"failed_dates={len(result.failed_dates)} -> {result.price_file}"
+    )
+    return 0 if not result.failed_dates else 2
+
+
+def _run_verify_price_store(args: argparse.Namespace) -> int:
+    try:
+        report = verify_price_store(args.store_dir, universe_file=args.universe_file)
+        write_reports(args.store_dir, universe_file=args.universe_file)
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    latest = report["latest_eligible_decision_dates"]
+    print(
+        f"Price store: rows={report['rows']}, tickers={report['ticker_count']}, "
+        f"dates={report['date_min']}..{report['date_max']}, "
+        f"duplicates={report['duplicate_ticker_date_rows']}, latest={latest}"
     )
     return 0
 
@@ -1918,6 +2005,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_prepare_price_csv(args)
     if args.command == "fetch-jquants-prices":
         return _run_fetch_jquants_prices(args)
+    if args.command == "fetch-jquants-prices-incremental":
+        return _run_fetch_jquants_prices_incremental(args)
+    if args.command == "verify-price-store":
+        return _run_verify_price_store(args)
     if args.command == "check-forward-readiness":
         return _run_check_forward_readiness(args)
     if args.command == "build-modeling-dataset":

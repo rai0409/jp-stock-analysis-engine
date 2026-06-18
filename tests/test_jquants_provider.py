@@ -202,6 +202,35 @@ def test_v2_daily_bars_fields_map_to_price_bars(tmp_path, monkeypatch):
     assert bar.volume == 250000.0
 
 
+def test_date_based_daily_bars_fetch_maps_codes_and_writes_cache(tmp_path, monkeypatch):
+    monkeypatch.delenv(ENV_API_KEY, raising=False)
+    calls = []
+
+    def transport(url: str, headers: dict[str, str]) -> dict:
+        calls.append((url, headers))
+        return {
+            "data": [
+                {"Date": "2026-03-24", "Code": "72030", "C": 100.0, "AdjC": 99.5},
+                {"Date": "2026-03-24", "Code": "99840", "C": 200.0, "AdjC": 199.5},
+            ]
+        }
+
+    provider = JQuantsProvider(
+        cache_dir=tmp_path / "cache", live=True, api_key="k", http_get=transport
+    )
+    bars = provider.fetch_daily_bars_by_date("2026-03-24", allow_network=True)
+    assert [(bar.ticker, bar.adjusted_close) for bar in bars] == [
+        ("7203", 99.5),
+        ("9984", 199.5),
+    ]
+    assert "date=2026-03-24" in calls[0][0]
+    assert "code=" not in calls[0][0]
+    assert provider.date_cache_path("daily_quotes", "2026-03-24").exists()
+
+    offline = JQuantsProvider(cache_dir=tmp_path / "cache")
+    assert len(offline.fetch_daily_bars_by_date("2026-03-24")) == 2
+
+
 def test_endpoint_does_not_exist_maps_to_helpful_error(tmp_path):
     probe_body = (
         '{"message": "The requested endpoint does not exist. Please check the URL, '
