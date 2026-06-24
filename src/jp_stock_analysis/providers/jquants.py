@@ -197,12 +197,27 @@ def _map_statement(row: dict[str, Any], ticker: str) -> FinancialStatement:
 
 def _map_listed_info(row: dict[str, Any], ticker: str) -> CompanyMetadata:
     # V2 (/equities/master): CoName / S33Nm / MktNm; V1 fallback names too.
+    raw_code = _first_value(row, ("Code", "LocalCode", "code", "local_code"))
+    company_name_en = _first_value(row, ("CoNameEn", "CompanyNameEnglish"))
+    sector_17 = _first_value(row, ("S17Nm", "Sector17CodeName"))
+    sector_33 = _first_value(row, ("S33Nm", "Sector33CodeName"))
+    market = _first_value(row, ("MktNm", "MarketCodeName"))
+    source_metadata = {"source": "jquants"}
+    for key, value in (
+        ("raw_code", raw_code),
+        ("company_name_en", company_name_en),
+        ("sector_17", sector_17),
+        ("sector_33", sector_33),
+        ("market", market),
+    ):
+        if value not in (None, ""):
+            source_metadata[key] = str(value)
     return CompanyMetadata(
         ticker=ticker,
         company_name=_first_value(row, ("CoName", "CoNameEn", "CompanyName", "CompanyNameEnglish")),
         sector=_first_value(row, ("S33Nm", "S17Nm", "Sector33CodeName", "Sector17CodeName")),
-        market=_first_value(row, ("MktNm", "MarketCodeName")),
-        source_metadata={"source": "jquants"},
+        market=market,
+        source_metadata=source_metadata,
     )
 
 
@@ -254,6 +269,10 @@ class JQuantsProvider:
         if day is None:
             raise ProviderError(f"invalid J-Quants date query: {target_date!r}")
         return self.cache_dir / f"{dataset}_by_date" / f"{day.isoformat()}.json"
+
+    def all_listed_info_cache_path(self) -> Path:
+        """Deterministic cache file location for the full listed master snapshot."""
+        return self.cache_dir / "listed_info" / "_all.json"
 
     def get_prices(
         self,
@@ -313,6 +332,43 @@ class JQuantsProvider:
     def get_metadata(self, ticker: str) -> CompanyMetadata | None:
         rows = self._load_rows("listed_info", ticker, {})
         return _map_listed_info(rows[0], ticker) if rows else None
+
+    def get_all_metadata(self, *, allow_network: bool = False) -> dict[str, CompanyMetadata]:
+        """Fetch/cache the full listed master snapshot and map it by normalized code.
+
+        This is still provider-backed: live access goes through the same
+        ``_fetch_rows_by_query`` path and ``x-api-key`` auth as per-code
+        ``get_metadata`` calls. Offline callers may use a cached
+        ``listed_info/_all.json`` snapshot.
+        """
+        path = self.all_listed_info_cache_path()
+        if path.exists():
+            try:
+                rows = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                raise ProviderError(f"invalid J-Quants cache file {path}: {exc}") from exc
+            if not isinstance(rows, list):
+                raise ProviderError(f"invalid J-Quants cache file {path}: expected a JSON list")
+        else:
+            if not allow_network:
+                raise ProviderError(
+                    f"no cached J-Quants listed_info master snapshot (expected {path}); "
+                    "full-master mode never fetches unless --allow-network is set."
+                )
+            rows = self._fetch_rows_by_query("listed_info", {})
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(rows, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+        mapped: dict[str, CompanyMetadata] = {}
+        for row in rows:
+            raw_code = _first_value(row, ("Code", "LocalCode", "code", "local_code"))
+            code = _normalize_jquants_code(raw_code)
+            if code:
+                mapped[code] = _map_listed_info(row, code)
+        return mapped
 
     def _load_rows(self, dataset: str, code: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         path = self.cache_path(dataset, code)

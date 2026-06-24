@@ -162,6 +162,9 @@ from jp_stock_analysis.validation.forward_returns import (
     load_forward_return_report,
     write_forward_return_outputs,
 )
+from jp_stock_analysis.validation.jquants_listed_master import (
+    export_jquants_listed_master_csv,
+)
 from jp_stock_analysis.validation.jquants_prices import export_jquants_prices_csv
 from jp_stock_analysis.validation.no_lookahead import (
     load_bundle_disclosure_date,
@@ -524,6 +527,22 @@ def build_parser() -> argparse.ArgumentParser:
     incremental.add_argument("--backoff-multiplier", default=2.0, type=float)
     incremental.add_argument("--continue-on-date-error", action="store_true")
     incremental.add_argument("--universe-name", default=None)
+
+    listed_master = subparsers.add_parser(
+        "fetch-jquants-listed-master",
+        help="export J-Quants listed master metadata for a universe "
+        "(requires explicit --allow-network for live API use)",
+    )
+    listed_master.add_argument("--universe-file", required=True)
+    listed_master.add_argument("--output-file", required=True)
+    listed_master.add_argument("--report-file", required=True)
+    listed_master.add_argument("--cache-dir", default=".cache/jquants")
+    listed_master.add_argument("--sleep-seconds", default=0.5, type=float)
+    listed_master.add_argument(
+        "--allow-network",
+        action="store_true",
+        help="permit live J-Quants calls through the provider (requires JQUANTS_API_KEY)",
+    )
 
     verify_store = subparsers.add_parser(
         "verify-price-store",
@@ -1133,6 +1152,40 @@ def _run_fetch_jquants_prices_incremental(args: argparse.Namespace) -> int:
         f"failed_dates={len(result.failed_dates)} -> {result.price_file}"
     )
     return 0 if not result.failed_dates else 2
+
+
+def _run_fetch_jquants_listed_master(args: argparse.Namespace) -> int:
+    if not args.allow_network:
+        print(
+            "error: fetch-jquants-listed-master requires --allow-network for live "
+            "J-Quants metadata export",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        provider = JQuantsProvider(cache_dir=args.cache_dir, live=args.allow_network)
+        result = export_jquants_listed_master_csv(
+            provider,
+            universe_file=args.universe_file,
+            output_file=args.output_file,
+            report_file=args.report_file,
+            sleep_seconds=args.sleep_seconds,
+            allow_network=args.allow_network,
+            endpoint_url_for_listed_info=provider.endpoint_url("listed_info"),
+        )
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    for warning in result.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    print(
+        f"J-Quants listed master exported: universe={result.universe_count}, "
+        f"matched={result.matched_count}, missing={result.missing_count} -> "
+        f"{result.output_path}"
+    )
+    print(f"Report written to: {result.report_path}")
+    return 0
 
 
 def _run_verify_price_store(args: argparse.Namespace) -> int:
@@ -2007,6 +2060,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_fetch_jquants_prices(args)
     if args.command == "fetch-jquants-prices-incremental":
         return _run_fetch_jquants_prices_incremental(args)
+    if args.command == "fetch-jquants-listed-master":
+        return _run_fetch_jquants_listed_master(args)
     if args.command == "verify-price-store":
         return _run_verify_price_store(args)
     if args.command == "check-forward-readiness":

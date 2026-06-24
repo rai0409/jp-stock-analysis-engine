@@ -22,6 +22,7 @@ from jp_stock_analysis.providers.jquants import (
     ENV_API_VERSION,
     ENV_BASE_URL,
     JQuantsProvider,
+    _map_listed_info,
 )
 
 CACHE_DIR = FIXTURES_DIR / "jquants_cache"
@@ -122,6 +123,29 @@ def test_cached_listed_info_maps_to_company_metadata():
     assert company.company_name == "サンプル自動車株式会社"
     assert company.sector == "輸送用機器"
     assert company.market == "プライム"
+
+
+def test_listed_info_mapping_preserves_useful_source_metadata():
+    company = _map_listed_info(
+        {
+            "Code": "167A",
+            "CoName": "サンプル株式会社",
+            "CoNameEn": "Sample Inc.",
+            "S17Nm": "情報通信・サービスその他",
+            "S33Nm": "情報・通信業",
+            "MktNm": "グロース",
+        },
+        "167A",
+    )
+
+    assert company.source_metadata == {
+        "source": "jquants",
+        "raw_code": "167A",
+        "company_name_en": "Sample Inc.",
+        "sector_17": "情報通信・サービスその他",
+        "sector_33": "情報・通信業",
+        "market": "グロース",
+    }
 
 
 def test_invalid_cache_file_raises_provider_error(tmp_path):
