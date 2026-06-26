@@ -162,6 +162,15 @@ from jp_stock_analysis.validation.forward_returns import (
     load_forward_return_report,
     write_forward_return_outputs,
 )
+from jp_stock_analysis.validation.jquants_daily_bars import (
+    DEFAULT_ADJUSTED_CLOSE_FILE,
+    DEFAULT_FEATURE_FILE,
+    FIELD_COVERAGE_REPORT,
+    QUALITY_REPORT,
+    build_daily_bars_analysis_features,
+    fetch_jquants_daily_bars_incremental,
+    write_daily_bars_quality_reports,
+)
 from jp_stock_analysis.validation.jquants_listed_master import (
     export_jquants_listed_master_csv,
 )
@@ -528,6 +537,20 @@ def build_parser() -> argparse.ArgumentParser:
     incremental.add_argument("--continue-on-date-error", action="store_true")
     incremental.add_argument("--universe-name", default=None)
 
+    daily_bars = subparsers.add_parser(
+        "fetch-jquants-daily-bars-incremental",
+        help="incrementally fetch production daily bars by date into prices_daily_bars.csv "
+        "(requires explicit --allow-network)",
+    )
+    daily_bars.add_argument("--universe-file", required=True)
+    daily_bars.add_argument("--store-dir", required=True)
+    daily_bars.add_argument("--start-date", required=True)
+    daily_bars.add_argument("--end-date", required=True)
+    daily_bars.add_argument("--sleep-seconds", default=90.0, type=float)
+    daily_bars.add_argument("--max-retries", default=2, type=int)
+    daily_bars.add_argument("--cache-dir", default=".cache/jquants")
+    daily_bars.add_argument("--allow-network", action="store_true")
+
     listed_master = subparsers.add_parser(
         "fetch-jquants-listed-master",
         help="export J-Quants listed master metadata for a universe "
@@ -551,6 +574,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verify_store.add_argument("--store-dir", required=True)
     verify_store.add_argument("--universe-file", default=None)
+
+    verify_daily_bars = subparsers.add_parser(
+        "verify-jquants-daily-bars",
+        help="write daily-bars quality and field coverage reports",
+    )
+    verify_daily_bars.add_argument("--store-dir", required=True)
+    verify_daily_bars.add_argument("--universe-file", required=True)
+    verify_daily_bars.add_argument(
+        "--adjusted-close-file",
+        default=DEFAULT_ADJUSTED_CLOSE_FILE,
+        help="adjusted-close store to compare against",
+    )
+    verify_daily_bars.add_argument("--output-report", default=None)
+    verify_daily_bars.add_argument("--field-coverage-report", default=None)
+
+    daily_features = subparsers.add_parser(
+        "build-daily-bars-analysis-features",
+        help="build modeling-oriented daily-bars features from adjusted OHLC and liquidity fields",
+    )
+    daily_features.add_argument("--daily-bars-file", required=True)
+    daily_features.add_argument("--coverage-file", default=None)
+    daily_features.add_argument("--output-file", default=DEFAULT_FEATURE_FILE)
+    daily_features.add_argument("--lookback-days", default=20, type=int)
+    daily_features.add_argument("--min-average-turnover", default=None, type=float)
+    daily_features.add_argument("--include-partial-history", action="store_true")
 
     readiness = subparsers.add_parser(
         "check-forward-readiness",
@@ -1154,6 +1202,40 @@ def _run_fetch_jquants_prices_incremental(args: argparse.Namespace) -> int:
     return 0 if not result.failed_dates else 2
 
 
+def _run_fetch_jquants_daily_bars_incremental(args: argparse.Namespace) -> int:
+    if not args.allow_network:
+        print(
+            "error: fetch-jquants-daily-bars-incremental requires --allow-network for live "
+            "J-Quants daily bars ingestion",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        provider = JQuantsProvider(cache_dir=args.cache_dir, live=args.allow_network)
+        result = fetch_jquants_daily_bars_incremental(
+            provider,
+            universe_file=args.universe_file,
+            store_dir=args.store_dir,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            allow_network=args.allow_network,
+            sleep_seconds=args.sleep_seconds,
+            max_retries=args.max_retries,
+        )
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        "Daily bars store updated: "
+        f"rows={result.rows}, tickers={result.tickers}, added={result.added}, "
+        f"date_min={result.date_min}, date_max={result.date_max}, "
+        f"failed_dates={len(result.failed_dates)} -> {result.output_file}"
+    )
+    if result.empty_dates:
+        print(f"Empty/non-trading dates recorded: {len(result.empty_dates)}")
+    return 0 if not result.failed_dates else 2
+
+
 def _run_fetch_jquants_listed_master(args: argparse.Namespace) -> int:
     if not args.allow_network:
         print(
@@ -1201,6 +1283,49 @@ def _run_verify_price_store(args: argparse.Namespace) -> int:
         f"dates={report['date_min']}..{report['date_max']}, "
         f"duplicates={report['duplicate_ticker_date_rows']}, latest={latest}"
     )
+    return 0
+
+
+def _run_verify_jquants_daily_bars(args: argparse.Namespace) -> int:
+    try:
+        output_report = args.output_report or str(Path(args.store_dir) / QUALITY_REPORT)
+        field_report = args.field_coverage_report or str(
+            Path(args.store_dir) / FIELD_COVERAGE_REPORT
+        )
+        report, _coverage = write_daily_bars_quality_reports(
+            store_dir=args.store_dir,
+            universe_file=args.universe_file,
+            adjusted_close_file=args.adjusted_close_file,
+            output_report=output_report,
+            field_coverage_report=field_report,
+        )
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Daily bars quality: rows={report['rows']}, tickers={report['tickers']}, "
+        f"dates={report['date_min']}..{report['date_max']}, "
+        f"duplicates={report['duplicate_ticker_date_rows']}, "
+        f"status={report['overall_status']} -> {output_report}"
+    )
+    print(f"Field coverage written to: {field_report}")
+    return 0
+
+
+def _run_build_daily_bars_analysis_features(args: argparse.Namespace) -> int:
+    try:
+        features = build_daily_bars_analysis_features(
+            daily_bars_file=args.daily_bars_file,
+            coverage_file=args.coverage_file,
+            output_file=args.output_file,
+            lookback_days=args.lookback_days,
+            min_average_turnover=args.min_average_turnover,
+            include_partial_history=args.include_partial_history,
+        )
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Daily bars features written: rows={len(features)} -> {args.output_file}")
     return 0
 
 
@@ -2060,10 +2185,16 @@ def main(argv: list[str] | None = None) -> int:
         return _run_fetch_jquants_prices(args)
     if args.command == "fetch-jquants-prices-incremental":
         return _run_fetch_jquants_prices_incremental(args)
+    if args.command == "fetch-jquants-daily-bars-incremental":
+        return _run_fetch_jquants_daily_bars_incremental(args)
     if args.command == "fetch-jquants-listed-master":
         return _run_fetch_jquants_listed_master(args)
     if args.command == "verify-price-store":
         return _run_verify_price_store(args)
+    if args.command == "verify-jquants-daily-bars":
+        return _run_verify_jquants_daily_bars(args)
+    if args.command == "build-daily-bars-analysis-features":
+        return _run_build_daily_bars_analysis_features(args)
     if args.command == "check-forward-readiness":
         return _run_check_forward_readiness(args)
     if args.command == "build-modeling-dataset":

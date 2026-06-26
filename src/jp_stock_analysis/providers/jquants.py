@@ -323,6 +323,23 @@ class JQuantsProvider:
         bars.sort(key=lambda bar: (bar.ticker, bar.date))
         return bars
 
+    def fetch_daily_bar_rows_by_date(
+        self,
+        target_date: date | str,
+        *,
+        allow_network: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Fetch/cache raw daily-bar rows for one date through the provider path.
+
+        This preserves all J-Quants fields for downstream audit exports while
+        reusing the same endpoint resolution, cache, pagination, and ``x-api-key``
+        request behavior as ``fetch_daily_bars_by_date``.
+        """
+        day = _to_date(target_date)
+        if day is None:
+            raise ProviderError(f"invalid J-Quants date query: {target_date!r}")
+        return self._load_rows_by_date("daily_quotes", day, allow_network=allow_network)
+
     def get_statements(self, ticker: str) -> list[FinancialStatement]:
         rows = self._load_rows("statements", ticker, {})
         statements = [_map_statement(row, ticker) for row in rows]
