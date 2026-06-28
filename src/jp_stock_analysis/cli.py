@@ -181,6 +181,10 @@ from jp_stock_analysis.validation.no_lookahead import (
     write_readiness_outputs,
 )
 from jp_stock_analysis.validation.price_prep import _parse_tickers, prepare_price_csv
+from jp_stock_analysis.validation.universe_coverage import (
+    filter_topix_universe_by_coverage,
+    usable_ticker_set,
+)
 
 
 def _analyze_ticker(
@@ -565,6 +569,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-network",
         action="store_true",
         help="permit live J-Quants calls through the provider (requires JQUANTS_API_KEY)",
+    )
+
+    coverage_filter = subparsers.add_parser(
+        "filter-topix-universe-by-coverage",
+        help="filter a TOPIX1000 universe coverage CSV to tickers usable for "
+        "dataset/modeling workflows; excludes partial-history names by default",
+    )
+    coverage_filter.add_argument("--coverage-file", required=True)
+    coverage_filter.add_argument("--output-file", required=True)
+    coverage_filter.add_argument("--excluded-report-file", required=True)
+    coverage_filter.add_argument(
+        "--include-partial-history",
+        action="store_true",
+        help="also include coverage_status=usable_partial_history tickers",
     )
 
     verify_store = subparsers.add_parser(
@@ -1270,6 +1288,28 @@ def _run_fetch_jquants_listed_master(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_filter_topix_universe_by_coverage(args: argparse.Namespace) -> int:
+    try:
+        result = filter_topix_universe_by_coverage(
+            coverage_file=args.coverage_file,
+            output_file=args.output_file,
+            excluded_report_file=args.excluded_report_file,
+            include_partial_history=args.include_partial_history,
+        )
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        "TOPIX1000 coverage filter: "
+        f"included={result.included_count}, excluded={result.excluded_count}, "
+        f"include_partial_history={result.include_partial_history} -> "
+        f"{result.output_file}"
+    )
+    print(f"Excluded ticker report written to: {result.excluded_report_file}")
+    return 0
+
+
 def _run_verify_price_store(args: argparse.Namespace) -> int:
     try:
         report = verify_price_store(args.store_dir, universe_file=args.universe_file)
@@ -1399,6 +1439,17 @@ def _add_modeling_input_args(sub: argparse.ArgumentParser) -> None:
         help="include non_consolidated rows (excluded by default; never pooled silently)",
     )
     sub.add_argument(
+        "--coverage-file",
+        default=None,
+        help="optional TOPIX1000 universe coverage CSV; when provided, file-input "
+        "modeling commands keep only usable_full_window tickers by default",
+    )
+    sub.add_argument(
+        "--include-partial-history",
+        action="store_true",
+        help="with --coverage-file, also keep usable_partial_history tickers",
+    )
+    sub.add_argument(
         "--n-quantiles", default=5, type=int, help="quantile buckets (default 5)"
     )
     sub.add_argument("--output-dir", required=True, help="directory for outputs")
@@ -1440,6 +1491,16 @@ def _load_modeling_dataset(args: argparse.Namespace):
     prices = load_prices_csv(args.prices)
     fundamentals = load_fundamentals_csv(args.fundamentals)
     metadata = load_company_metadata_csv(args.metadata) if args.metadata else {}
+    if args.coverage_file:
+        usable = usable_ticker_set(
+            args.coverage_file,
+            include_partial_history=args.include_partial_history,
+        )
+        prices = {ticker: rows for ticker, rows in prices.items() if ticker in usable}
+        fundamentals = {
+            ticker: rows for ticker, rows in fundamentals.items() if ticker in usable
+        }
+        metadata = {ticker: row for ticker, row in metadata.items() if ticker in usable}
     dataset = build_modeling_dataset(
         fundamentals,
         prices,
@@ -2189,6 +2250,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_fetch_jquants_daily_bars_incremental(args)
     if args.command == "fetch-jquants-listed-master":
         return _run_fetch_jquants_listed_master(args)
+    if args.command == "filter-topix-universe-by-coverage":
+        return _run_filter_topix_universe_by_coverage(args)
     if args.command == "verify-price-store":
         return _run_verify_price_store(args)
     if args.command == "verify-jquants-daily-bars":
