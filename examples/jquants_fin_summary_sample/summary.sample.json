@@ -1,0 +1,16 @@
+{
+  "input": "data/jquants_price_store/financial_summary_raw.csv",
+  "rows": 12,
+  "tickers": 6,
+  "disc_date_min": "2024-04-01",
+  "disc_date_max": "2024-04-10",
+  "discno_duplicates": 0,
+  "doctype_count": 3,
+  "months": 1,
+  "note": "Synthetic sample for public repository. Not actual J-Quants data.",
+  "outputs": [
+    "monthly_disclosure_counts.sample.csv",
+    "doctype_counts.sample.csv",
+    "commercial_important_events.sample.csv"
+  ]
+}

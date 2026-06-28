@@ -1,0 +1,4 @@
+ticker,DiscDate,disclosure_count,first_time,last_time,has_financial_statement,has_earnings_forecast_revision,has_dividend_forecast_revision,doctypes,discnos,event_combo,commercial_priority_score
+1001,2024-04-01,1,15:00:00,15:00:00,False,True,False,EarnForecastRevision,SAMPLE000001,EARNINGS_REVISION_ONLY,75
+1002,2024-04-02,1,15:30:00,15:30:00,False,False,True,DividendForecastRevision,SAMPLE000002,DIVIDEND_REVISION_ONLY,65
+1003,2024-04-03,2,15:00:00,16:00:00,True,True,False,FinancialStatement|EarnForecastRevision,SAMPLE000003|SAMPLE000004,FINANCIAL_AND_EARNINGS_REVISION,95

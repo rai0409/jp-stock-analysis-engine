@@ -12,9 +12,19 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 
 
-PROJECT_DIR = Path("PROJECT_ROOT")
+PROJECT_DIR = Path(
+    os.getenv(
+        "JP_STOCK_ANALYSIS_PROJECT_DIR",
+        str(Path(__file__).resolve().parents[1]),
+    )
+)
 LOCAL_STORE = PROJECT_DIR / "data/jquants_price_store"
-UNIVERSE_FILE = LOCAL_STORE / "topix1000_usable_tickers.csv"
+UNIVERSE_FILE = Path(
+    os.getenv(
+        "JP_STOCK_ANALYSIS_UNIVERSE_FILE",
+        str(LOCAL_STORE / "topix1000_usable_tickers.csv"),
+    )
+)
 
 JST = timezone(timedelta(hours=9))
 
@@ -23,14 +33,12 @@ COVERAGE_NAME = "financial_summary_coverage.csv"
 STATE_NAME = "financial_summary_auto_state.json"
 RUN_LOG_NAME = "financial_summary_auto_runs.jsonl"
 
-EXTERNAL_CANDIDATES = [
-    os.getenv("JQUANTS_EXTERNAL_STORE_DIR", ""),
-    "EXTERNAL_JQUANTS_STORE",
-    "EXTERNAL_JQUANTS_STORE",
-    "EXTERNAL_JQUANTS_STORE",
-    "EXTERNAL_JQUANTS_STORE",
-    "/runEXTERNAL_JQUANTS_STORE",
-]
+def get_external_candidates() -> list[str]:
+    raw = os.getenv("JQUANTS_EXTERNAL_STORE_DIRS") or os.getenv("JQUANTS_EXTERNAL_STORE_DIR", "")
+    return [item.strip() for item in raw.split(os.pathsep) if item.strip()]
+
+
+EXTERNAL_CANDIDATES = get_external_candidates()
 
 
 def load_env_file(path: Path) -> None:
