@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>J-Quants Commercial Screening Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/commercial_dashboard.css') }}">
+</head>
+<body>
+  <header class="page-header">
+    <div>
+      <h1>J-Quants Commercial Screening Dashboard</h1>
+      <p class="disclaimer">Screening support only. Not investment advice.</p>
+    </div>
+    <dl class="meta-grid">
+      <div><dt>Generated</dt><dd>{{ snapshot.get("generated_at_jst") or "n/a" }}</dd></div>
+      <div><dt>Latest disclosure date</dt><dd>{{ snapshot.get("latest_disc_date") or "n/a" }}</dd></div>
+      <div><dt>Latest price date</dt><dd>{{ snapshot.get("latest_price_date") or "n/a" }}</dd></div>
+      <div><dt>Latest financial summary date</dt><dd>{{ snapshot.get("latest_financial_summary_disc_date") or "n/a" }}</dd></div>
+    </dl>
+  </header>
+
+  <main>
+    <section class="cards">
+      {% set counts = snapshot.get("total_counts_by_classification") or {} %}
+      {% for label, value in [
+        ("Total dashboard rows", snapshot.get("total_dashboard_rows")),
+        ("Unique tickers", snapshot.get("total_unique_tickers")),
+        ("Latest date rows", snapshot.get("latest_date_total_rows")),
+        ("Latest date tickers", snapshot.get("latest_date_unique_tickers")),
+        ("positive_reacted", counts.get("positive_reacted", 0)),
+        ("positive_unreacted", counts.get("positive_unreacted", 0)),
+        ("negative_reacted", counts.get("negative_reacted", 0)),
+        ("negative_reversal", counts.get("negative_reversal", 0)),
+        ("excluded", counts.get("excluded", 0)),
+        ("unclassified", counts.get("unclassified", 0)),
+      ] %}
+      <div class="card"><span>{{ label }}</span><strong>{{ value if value is not none else "n/a" }}</strong></div>
+      {% endfor %}
+    </section>
+
+    <section class="panel">
+      <h2>Classification Counts</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>classification</th><th>rows</th></tr></thead>
+          <tbody>
+            {% for label, value in counts.items() %}
+            <tr><td>{{ label }}</td><td>{{ value }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    {% macro render_table(title, rows) -%}
+    <section class="panel">
+      <h2>{{ title }}</h2>
+      <div class="table-wrap">
+        {% if rows %}
+        {% set preferred = ["ticker","company_name","DiscDate","first_time","sector33_name","market_segment","topix_size_category","candidate_bucket","ranking_score","abnormal_ret_1d","ret_1d","liquidity_bucket","is_liquid_enough","price_reaction_status_v2","commercial_signal"] %}
+        {% set cols = [] %}
+        {% for col in preferred %}
+          {% if col in rows[0] %}{% set _ = cols.append(col) %}{% endif %}
+        {% endfor %}
+        <table>
+          <thead><tr>{% for col in cols %}<th>{{ col }}</th>{% endfor %}</tr></thead>
+          <tbody>
+            {% for row in rows %}
+            <tr>{% for col in cols %}<td>{{ row.get(col) if row.get(col) is not none else "" }}</td>{% endfor %}</tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="muted">No rows.</p>
+        {% endif %}
+      </div>
+    </section>
+    {%- endmacro %}
+
+    <section class="grid-two">
+      {{ render_table("positive_reacted watchlist candidates", rankings["positive_reacted"]["rows"]) }}
+      {{ render_table("positive_unreacted watchlist candidates", rankings["positive_unreacted"]["rows"]) }}
+      {{ render_table("negative_reacted watchlist candidates", rankings["negative_reacted"]["rows"]) }}
+      {{ render_table("negative_reversal watchlist candidates", rankings["negative_reversal"]["rows"]) }}
+    </section>
+
+    {{ render_table("Daily Summary", daily_summary) }}
+    {{ render_table("Sector Summary", sector_summary) }}
+    {{ render_table("Market Segment Summary", market_summary) }}
+    {{ render_table("TOPIX Size Summary", topix_summary) }}
+
+    <section class="panel warning-panel">
+      <h2>Audit / Warnings</h2>
+      {% if warnings %}
+      <ul>{% for warning in warnings %}<li>{{ warning }}</li>{% endfor %}</ul>
+      {% else %}
+      <p>No dashboard warnings.</p>
+      {% endif %}
+      <h3>Input rows</h3>
+      <pre>{{ audit.get("input_row_counts", {}) }}</pre>
+      <h3>Output rows</h3>
+      <pre>{{ audit.get("output_row_counts", {}) }}</pre>
+      <h3>Missing columns</h3>
+      <pre>{{ audit.get("missing_columns", {}) }}</pre>
+    </section>
+
+    <section class="panel">
+      <h2>Downloads</h2>
+      <div class="download-grid">
+        {% for item in downloads %}
+          {% if item.exists %}
+          <a href="/download/{{ item.name }}">{{ item.name }}</a>
+          {% else %}
+          <span class="muted">{{ item.name }}</span>
+          {% endif %}
+        {% endfor %}
+      </div>
+    </section>
+  </main>
+</body>
+</html>

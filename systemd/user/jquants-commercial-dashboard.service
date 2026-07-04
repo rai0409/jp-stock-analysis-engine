@@ -1,0 +1,15 @@
+[Unit]
+Description=J-Quants commercial screening dashboard
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/rai/projects/jp-stock-analysis-engine
+ExecStart=/home/rai/projects/jp-stock-analysis-engine/scripts/run_jquants_commercial_dashboard_server.sh
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/home/rai/projects/jp-stock-analysis-engine/logs/jquants_commercial_dashboard_server.log
+StandardError=append:/home/rai/projects/jp-stock-analysis-engine/logs/jquants_commercial_dashboard_server.err.log
+
+[Install]
+WantedBy=default.target

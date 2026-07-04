@@ -270,6 +270,7 @@ def test_incremental_cli_smoke_cache_only_missing_returns_nonzero(tmp_path, caps
             "--start-date", "2026-03-23",
             "--end-date", "2026-03-23",
             "--price-field", "adjusted_close",
+            "--cache-dir", str(tmp_path / "missing_cache"),
         ]
     )
     assert rc == 2

@@ -51,3 +51,6 @@ analysis/jquants_fin_summary/
 
 # Local Claude/assistant settings
 .claude/
+
+# Local Codex/ChatGPT prompts
+prompts/

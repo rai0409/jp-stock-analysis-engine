@@ -2332,5 +2332,9 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def main_fetch_jquants_daily_bars_incremental(argv: list[str] | None = None) -> int:
+    return main(["fetch-jquants-daily-bars-incremental", *(argv if argv is not None else sys.argv[1:])])
+
+
 if __name__ == "__main__":
     raise SystemExit(main())

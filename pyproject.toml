@@ -7,7 +7,22 @@ dependencies = [
   "pandas>=2.0",
   "numpy>=1.24",
   "pydantic>=2.0",
+  "fastapi>=0.110",
+  "uvicorn>=0.27",
+  "jinja2>=3.1",
 ]
+
+[project.scripts]
+build-jquants-price-reaction-v2 = "jp_stock_analysis.analysis.jquants_price_reaction_v2:main"
+build-jquants-abnormal-return = "jp_stock_analysis.analysis.jquants_abnormal_return:main"
+build-jquants-liquidity-features = "jp_stock_analysis.analysis.jquants_liquidity:main"
+build-jquants-robust-summary = "jp_stock_analysis.analysis.jquants_robust_summary:main"
+build-jquants-commercial-quality-dataset = "jp_stock_analysis.analysis.jquants_commercial_quality_pipeline:main"
+build-jquants-commercial-quality-rankings = "jp_stock_analysis.analysis.jquants_commercial_quality_rankings:main"
+build-jquants-commercial-quality-enriched-rankings = "jp_stock_analysis.analysis.jquants_commercial_quality_enrichment:main"
+build-jquants-commercial-daily-dashboard = "jp_stock_analysis.analysis.jquants_commercial_daily_dashboard:main"
+fetch-jquants-daily-bars-incremental = "jp_stock_analysis.cli:main_fetch_jquants_daily_bars_incremental"
+serve-jquants-commercial-dashboard = "jp_stock_analysis.web.commercial_dashboard_app:main"
 
 [project.optional-dependencies]
 dev = [
