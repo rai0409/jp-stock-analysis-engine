@@ -65,6 +65,17 @@ def _write_minimal_inputs(base):
         "avg_turnover_20d": 200_000_000,
         "turnover_spike_ratio": 2.0,
         "doctypes": "EarnForecastRevision",
+        "event_classification_detail": "positive_confirmed",
+        "event_direction_final": "positive",
+        "event_reaction_pattern": "immediate_confirmed",
+        "event_confidence_tier": "high",
+        "classification_basis_level": "sector_size_adjusted",
+        "classification_evidence_count": 3,
+        "classification_limitation_count": 1,
+        "mixed_event_severity": "none",
+        "manual_review_category": "none",
+        "manual_review_priority": "low",
+        "auto_classification_safe_flag": True,
     }
     pd.DataFrame([ranking_row]).to_csv(
         analysis / "commercial_quality_positive_reacted_ranking_enriched.csv", index=False
@@ -258,6 +269,42 @@ def test_abnormal_return_v2_summary_detects_adjusted_coverage():
     assert summary["insufficient_sector_peer_rows"] == 1
     assert summary["insufficient_size_peer_rows"] == 2
     assert summary["universe_adjusted_only_rows"] == 1
+
+
+def test_classification_quality_v2_report_metrics(tmp_path):
+    financial, prices, analysis = _write_minimal_inputs(tmp_path)
+    report = build_commercial_analysis_validity_audit(financial, prices, analysis, analysis)
+    assert report["classification_confidence_tier_counts"]["high"] == 1
+    assert report["event_direction_final_counts"]["positive"] == 1
+    assert report["event_reaction_pattern_counts"]["immediate_confirmed"] == 1
+    assert report["manual_review_priority_counts"]["low"] == 1
+    assert report["auto_classification_safe_ratio"] == 1.0
+    assert report["adjusted_evidence_supported_classification_ratio"] == 1.0
+    assert report["high_priority_manual_review_rows"] == 0
+    assert report["universe_only_high_confidence_rows"] == 0
+    assert report["classification_quality_score"] > 0
+
+
+def test_universe_only_high_confidence_is_critical_issue():
+    classification = pd.DataFrame(
+        [
+            {
+                "classification_issue": "",
+                "ranking_file": "positive_reacted",
+                "classification_basis_level": "universe_adjusted_only",
+                "event_confidence_tier": "high",
+            }
+        ]
+    )
+    issues = build_critical_issues(
+        pd.DataFrame(),
+        pd.DataFrame(),
+        classification,
+        pd.DataFrame(),
+        pd.DataFrame(),
+        pd.DataFrame(),
+    )
+    assert "universe_only_high_confidence_classification" in set(issues["issue_type"])
 
 
 def test_signal_bucket_summary_generated():

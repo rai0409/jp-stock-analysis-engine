@@ -222,6 +222,9 @@ def test_commercial_quality_rankings_writes_unclassified_audit(tmp_path):
         _base_row("3003", "earnings_upward", 0.03),
         _base_row("3004", "mixed_revision", 0.01),
     ]
+    rows[1]["sector_size_adjusted_return_1d"] = 0.0
+    rows[1]["sector_adjusted_return_1d"] = 0.0
+    rows[1]["size_adjusted_return_1d"] = 0.0
     rows[3]["liquidity_bucket"] = "low"
     rows[3]["is_liquid_enough"] = False
 
@@ -273,3 +276,53 @@ def test_commercial_quality_rankings_flags_duplicate_mixed_events(tmp_path):
     assert ranked["mixed_event_flag"].astype(str).str.lower().isin(["true", "1"]).all()
     assert ranked["manual_review_required"].astype(str).str.lower().isin(["true", "1"]).all()
     assert ranked["manual_review_reason"].astype(str).str.contains("duplicate_event_context_unresolved").all()
+
+
+def test_classification_quality_v2_uses_adjusted_evidence_and_fields(tmp_path):
+    rows = [_base_row("5001", "earnings_upward", 0.0)]
+    rows[0]["sector_size_adjusted_return_1d"] = 0.025
+    rows[0]["sector_size_adjusted_return_3d"] = 0.03
+    rows[0]["sector_size_adjusted_return_5d"] = 0.035
+    rows[0]["sector_size_adjusted_return_20d"] = 0.04
+    paths = _run(tmp_path, rows)
+
+    ranked = pd.read_csv(paths["positive_reacted"], dtype={"ticker": str})
+    row = ranked.iloc[0]
+    assert row["event_classification_detail"] == "positive_confirmed"
+    assert row["event_direction_final"] == "positive"
+    assert row["event_reaction_pattern"] == "immediate_confirmed"
+    assert row["event_confidence_tier"] in {"high", "medium"}
+    assert row["classification_basis_level"] == "sector_size_adjusted"
+    assert int(row["classification_evidence_count"]) == 4
+    assert str(row["auto_classification_safe_flag"]).lower() in {"true", "1"}
+    components = json.loads(row["ranking_score_components"])
+    assert components["adjusted_return_basis"] == "sector_size_adjusted"
+    assert "event_confidence_tier" in components
+
+
+def test_universe_only_evidence_cannot_be_high_confidence(tmp_path):
+    rows = [_base_row("5002", "earnings_upward", 0.02)]
+    rows[0]["abnormal_return_adjustment_basis"] = "universe_adjusted_only"
+    rows[0]["sector_size_adjusted_return_1d"] = None
+    rows[0]["sector_adjusted_return_1d"] = None
+    rows[0]["size_adjusted_return_1d"] = None
+    paths = _run(tmp_path, rows)
+
+    row = pd.read_csv(paths["positive_reacted"], dtype={"ticker": str}).iloc[0]
+    assert row["classification_basis_level"] == "universe_adjusted_only"
+    assert row["event_confidence_tier"] != "high"
+    assert "fallback_universe_only" in row["manual_review_category"]
+    assert str(row["auto_classification_safe_flag"]).lower() in {"false", "0"}
+
+
+def test_mixed_reaction_horizons_create_contradiction_flags(tmp_path):
+    rows = [_base_row("5003", "earnings_upward", 0.02)]
+    rows[0]["sector_size_adjusted_return_1d"] = 0.02
+    rows[0]["sector_size_adjusted_return_5d"] = -0.03
+    rows[0]["sector_size_adjusted_return_20d"] = -0.04
+    paths = _run(tmp_path, rows)
+
+    row = pd.read_csv(paths["positive_reacted"], dtype={"ticker": str}).iloc[0]
+    assert row["event_reaction_pattern"] == "overreaction_or_reversal"
+    assert "1d_5d_reaction_conflict" in row["contradiction_flags"]
+    assert row["mixed_event_severity"] in {"medium", "high"}

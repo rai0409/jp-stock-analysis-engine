@@ -44,10 +44,24 @@ EVIDENCE_COLUMNS = [
     "classification_confidence",
     "classification_reason",
     "classification_reason_components",
+    "event_classification_detail",
+    "event_direction_final",
+    "event_reaction_pattern",
+    "event_confidence_tier",
+    "classification_basis_level",
+    "classification_evidence_count",
+    "classification_limitation_count",
     "mixed_event_flag",
     "mixed_event_reason",
+    "mixed_event_severity",
+    "mixed_event_components",
+    "contradiction_flags",
     "manual_review_required",
     "manual_review_reason",
+    "manual_review_category",
+    "manual_review_priority",
+    "manual_review_resolution_hint",
+    "auto_classification_safe_flag",
     "ranking_score",
     "ranking_score_components",
     "primary_signal",
@@ -259,6 +273,240 @@ def _as_float(value: object) -> float | None:
     return None if pd.isna(parsed) else float(parsed)
 
 
+def _sign(value: float | None, threshold: float = 0.0) -> int:
+    if value is None:
+        return 0
+    if value > threshold:
+        return 1
+    if value < -threshold:
+        return -1
+    return 0
+
+
+def _selected_adjusted_evidence(row: pd.Series) -> dict[str, Any]:
+    basis = str(row.get("abnormal_return_adjustment_basis") or "").strip() or "universe_adjusted_only"
+    quality = str(row.get("abnormal_return_adjustment_quality") or "").strip() or "acceptable_with_limitations"
+    candidates = [
+        ("sector_size_adjusted", "sector_size_adjusted_return"),
+        ("sector_adjusted", "sector_adjusted_return"),
+        ("size_adjusted", "size_adjusted_return"),
+        ("universe_adjusted_only", "abnormal_ret"),
+    ]
+    selected_basis = "universe_adjusted_only"
+    values: dict[str, float | None] = {}
+    for basis_name, prefix in candidates:
+        vals = {f"{h}d": _as_float(row.get(f"{prefix}_{h}d")) for h in (1, 3, 5, 20)}
+        if any(vals[h] is not None for h in ("1d", "3d", "5d")):
+            selected_basis = basis_name
+            values = vals
+            break
+    if not values:
+        values = {f"{h}d": _as_float(row.get(f"abnormal_ret_{h}d")) for h in (1, 3, 5, 20)}
+
+    limitations: list[str] = []
+    if selected_basis == "universe_adjusted_only" or basis in {"universe_adjusted_only", "adjustment_unavailable"}:
+        limitations.append("fallback_universe_only")
+    if quality in {"insufficient_peers", "unavailable", "missing"}:
+        limitations.append("insufficient_peer_evidence")
+    elif quality == "acceptable_with_limitations":
+        limitations.append("peer_evidence_limited")
+    for flag_col, name in [
+        ("insufficient_sector_size_peer_flag", "insufficient_sector_size_peer_evidence"),
+        ("insufficient_sector_peer_flag", "insufficient_sector_peer_evidence"),
+        ("insufficient_size_peer_flag", "insufficient_size_peer_evidence"),
+    ]:
+        if _truthy(row.get(flag_col)):
+            limitations.append(name)
+    if values.get("20d") is None:
+        limitations.append("20d_horizon_unavailable")
+    if not any(values[h] is not None for h in ("1d", "3d", "5d")):
+        limitations.append("short_horizon_adjusted_evidence_missing")
+    supported = (
+        selected_basis != "universe_adjusted_only"
+        and quality in {"acceptable", "acceptable_with_limitations"}
+        and any(values[h] is not None for h in ("1d", "3d", "5d"))
+    )
+    return {
+        "basis": selected_basis,
+        "source_basis": basis,
+        "quality": quality,
+        "values": values,
+        "evidence_count": int(sum(value is not None for value in values.values())),
+        "limitations": limitations,
+        "supported": supported,
+    }
+
+
+def _fundamental_direction(row: pd.Series) -> str:
+    positive = is_positive_signal(row.get("commercial_signal"))
+    negative = is_negative_signal(row.get("commercial_signal"))
+    earnings = str(row.get("earnings_revision_direction", "")).lower()
+    dividend = str(row.get("dividend_revision_direction", "")).lower()
+    pos_terms = positive or "upward" in earnings or "increase" in earnings or "increase" in dividend or "upward" in dividend
+    neg_terms = negative or "downward" in earnings or "decrease" in earnings or "decrease" in dividend or "downward" in dividend
+    if pos_terms and neg_terms:
+        return "mixed"
+    if pos_terms:
+        return "positive"
+    if neg_terms:
+        return "negative"
+    return "neutral_or_unclear"
+
+
+def _classification_quality(row: pd.Series, label: str, duplicate_event_flag: bool, horizon_flags: list[str], liquidity_flags: list[str]) -> dict[str, Any]:
+    evidence = _selected_adjusted_evidence(row)
+    values = evidence["values"]
+    s1 = _sign(values.get("1d"))
+    s3 = _sign(values.get("3d"))
+    s5 = _sign(values.get("5d"))
+    s20 = _sign(values.get("20d"))
+    short_signs = [s for s in (s1, s3, s5) if s]
+    short_sum = sum(short_signs)
+    reaction_direction = 1 if short_sum > 0 else -1 if short_sum < 0 else 0
+    fundamental = _fundamental_direction(row)
+    expected = 1 if fundamental == "positive" else -1 if fundamental == "negative" else 0
+
+    contradiction_flags: list[str] = []
+    components: list[str] = []
+    if fundamental == "mixed":
+        contradiction_flags.append("mixed_fundamental_direction")
+        components.append("fundamental_direction_conflict")
+    if expected and reaction_direction and expected != reaction_direction:
+        contradiction_flags.append("adjusted_reaction_conflict")
+        components.append("fundamental_vs_adjusted_reaction")
+    if s1 and s5 and s1 != s5:
+        contradiction_flags.append("1d_5d_reaction_conflict")
+        components.append("short_horizon_reversal")
+    if s1 and s20 and s1 != s20:
+        contradiction_flags.append("1d_20d_reaction_conflict")
+        components.append("long_horizon_reversal")
+    if evidence["basis"] == "universe_adjusted_only":
+        contradiction_flags.append("fallback_universe_only")
+    if duplicate_event_flag:
+        contradiction_flags.append("duplicate_event_context")
+    if "short_horizon_adjusted_evidence_missing" in evidence["limitations"]:
+        contradiction_flags.append("missing_required_fields")
+
+    if not short_signs:
+        reaction_pattern = "horizon_unavailable" if "short_horizon_adjusted_evidence_missing" in evidence["limitations"] else "no_clear_reaction"
+    elif (s1 and s5 and s1 != s5) or (s1 and s20 and s1 != s20):
+        reaction_pattern = "overreaction_or_reversal"
+    elif s1 and (s3 == s1 or s5 == s1 or (s3 == 0 and s5 == 0)):
+        reaction_pattern = "immediate_confirmed"
+    elif not s1 and (s3 or s5):
+        reaction_pattern = "delayed_reaction"
+    else:
+        reaction_pattern = "no_clear_reaction"
+
+    if fundamental == "mixed" or ("adjusted_reaction_conflict" in contradiction_flags and evidence["supported"]):
+        direction_final = "mixed"
+    elif expected > 0:
+        direction_final = "positive"
+    elif expected < 0:
+        direction_final = "negative"
+    elif evidence["evidence_count"] == 0:
+        direction_final = "insufficient_evidence"
+    else:
+        direction_final = "neutral_or_unclear"
+
+    severe_flags = {"mixed_fundamental_direction", "adjusted_reaction_conflict", "1d_20d_reaction_conflict", "missing_required_fields"}
+    if len([flag for flag in contradiction_flags if flag in severe_flags]) >= 2:
+        mixed_severity = "high"
+    elif any(flag in contradiction_flags for flag in severe_flags):
+        mixed_severity = "medium"
+    elif contradiction_flags:
+        mixed_severity = "low"
+    else:
+        mixed_severity = "none"
+
+    if direction_final == "insufficient_evidence" or evidence["evidence_count"] == 0:
+        detail = "insufficient_evidence"
+    elif evidence["quality"] in {"unavailable", "insufficient_peers"} or "missing_required_fields" in contradiction_flags:
+        detail = "not_product_ready"
+    elif direction_final == "mixed" or mixed_severity in {"medium", "high"} and fundamental == "mixed":
+        detail = "mixed_event"
+    elif direction_final == "neutral_or_unclear":
+        detail = "ambiguous_event"
+    elif direction_final == "positive":
+        if reaction_pattern == "immediate_confirmed":
+            detail = "positive_confirmed"
+        elif reaction_pattern == "delayed_reaction":
+            detail = "positive_delayed"
+        elif reaction_pattern == "overreaction_or_reversal":
+            detail = "positive_overreaction_risk"
+        elif reaction_direction <= 0:
+            detail = "positive_unreacted"
+        else:
+            detail = "ambiguous_event"
+    elif direction_final == "negative":
+        if reaction_pattern == "immediate_confirmed":
+            detail = "negative_confirmed"
+        elif reaction_pattern == "delayed_reaction":
+            detail = "negative_delayed"
+        elif reaction_pattern == "overreaction_or_reversal" or reaction_direction > 0:
+            detail = "negative_reversal"
+        else:
+            detail = "ambiguous_event"
+    else:
+        detail = "ambiguous_event"
+
+    limitation_count = len(set(evidence["limitations"] + contradiction_flags + horizon_flags + liquidity_flags))
+    confidence = 0.94
+    if not evidence["supported"]:
+        confidence -= 0.22
+    if evidence["basis"] == "universe_adjusted_only":
+        confidence = min(confidence, 0.69)
+    if evidence["quality"] == "acceptable_with_limitations":
+        confidence -= 0.05
+    if evidence["quality"] in {"insufficient_peers", "unavailable"}:
+        confidence -= 0.20
+    if mixed_severity == "high":
+        confidence -= 0.35
+    elif mixed_severity == "medium":
+        confidence -= 0.22
+    elif mixed_severity == "low":
+        confidence -= 0.10
+    if duplicate_event_flag:
+        confidence -= 0.15
+    if any(flag.startswith("ret_1d") or flag.startswith("abnormal_ret_1d") for flag in horizon_flags):
+        confidence -= 0.20
+    if liquidity_flags:
+        confidence -= 0.08
+    if values.get("20d") is None:
+        confidence -= 0.03
+    confidence = round(max(0.0, min(1.0, confidence)), 2)
+
+    if evidence["evidence_count"] == 0:
+        tier = "not_evaluable"
+    elif mixed_severity == "high":
+        tier = "manual_review"
+    elif confidence >= 0.82 and evidence["supported"] and evidence["basis"] != "universe_adjusted_only":
+        tier = "high"
+    elif confidence >= 0.68 and evidence["basis"] != "universe_adjusted_only":
+        tier = "medium"
+    elif confidence >= 0.45:
+        tier = "low"
+    else:
+        tier = "manual_review"
+
+    return {
+        "classification_confidence": confidence,
+        "event_classification_detail": detail,
+        "event_direction_final": direction_final,
+        "event_reaction_pattern": reaction_pattern,
+        "event_confidence_tier": tier,
+        "classification_basis_level": evidence["basis"],
+        "classification_evidence_count": evidence["evidence_count"],
+        "classification_limitation_count": limitation_count,
+        "mixed_event_severity": mixed_severity,
+        "mixed_event_components": _pipe(components),
+        "contradiction_flags": _pipe(contradiction_flags),
+        "adjusted_evidence_supported": bool(evidence["supported"]),
+        "evidence_limitations": evidence["limitations"],
+        "selected_1d": values.get("1d"),
+    }
+
+
 def _is_valid_status(row: pd.Series, column: str) -> bool:
     return str(row.get(column, "")).strip() == "valid"
 
@@ -384,13 +632,11 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
         duplicate_event_flag = _row_duplicate_flag(row, duplicate_keys)
         horizon = _horizon_flags(row)
         liquidity = _liquidity_flags(row)
-        confidence = _classification_confidence(
-            row,
-            mixed_event_flag=mixed_event_flag,
-            duplicate_event_flag=duplicate_event_flag,
-            horizon_flags=horizon,
-            liquidity_flags=liquidity,
-        )
+        quality_result = _classification_quality(row, label, duplicate_event_flag, horizon, liquidity)
+        confidence = quality_result["classification_confidence"]
+        if quality_result["mixed_event_severity"] in {"medium", "high"}:
+            mixed_event_flag = True
+            mixed_reason = _pipe([mixed_reason, quality_result["contradiction_flags"]])
         adjusted_score = _as_float(row.get("commercial_abnormal_reaction_score"))
         score = adjusted_score
         if score is None:
@@ -398,10 +644,35 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
         if score is None:
             abnormal = _as_float(row.get("abnormal_ret_1d"))
             score = None if abnormal is None else round(abs(abnormal), 8)
+        score_penalty = 0.0
+        if quality_result["mixed_event_severity"] == "high":
+            score_penalty += 0.35
+        elif quality_result["mixed_event_severity"] == "medium":
+            score_penalty += 0.20
+        elif quality_result["mixed_event_severity"] == "low":
+            score_penalty += 0.08
+        if quality_result["event_confidence_tier"] in {"manual_review", "not_evaluable"}:
+            score_penalty += 0.20
+        elif quality_result["event_confidence_tier"] == "low":
+            score_penalty += 0.10
+        if "20d_horizon_unavailable" in quality_result["evidence_limitations"]:
+            score_penalty += 0.04
+        if liquidity:
+            score_penalty += 0.05
+        if score is not None:
+            score = round(float(score) * max(0.0, 1.0 - min(score_penalty, 0.75)), 8)
         score_components = {
             "commercial_candidate_score": _as_float(row.get("commercial_candidate_score")),
             "commercial_abnormal_reaction_score": adjusted_score,
             "commercial_abnormal_reaction_score_components": row.get("commercial_abnormal_reaction_score_components"),
+            "adjusted_return_basis": quality_result["classification_basis_level"],
+            "classification_confidence": confidence,
+            "event_confidence_tier": quality_result["event_confidence_tier"],
+            "event_classification_detail": quality_result["event_classification_detail"],
+            "mixed_event_penalty": score_penalty if quality_result["mixed_event_severity"] != "none" else 0.0,
+            "manual_review_limitation": quality_result["event_confidence_tier"] in {"manual_review", "not_evaluable"},
+            "horizon_limitation": "20d_horizon_unavailable" in quality_result["evidence_limitations"],
+            "liquidity_limitation": bool(liquidity),
             "abnormal_ret_1d": _as_float(row.get("abnormal_ret_1d")),
             "sector_adjusted_return_1d": _as_float(row.get("sector_adjusted_return_1d")),
             "size_adjusted_return_1d": _as_float(row.get("size_adjusted_return_1d")),
@@ -428,18 +699,30 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
         if horizon:
             classification_reason = f"{classification_reason}; horizon_flags={_pipe(horizon)}"
         manual_reasons: list[str] = []
+        manual_categories: list[str] = []
         if confidence < 0.70:
             manual_reasons.append("low_classification_confidence")
+            manual_categories.append("weak_classification_basis")
         if mixed_event_flag:
             manual_reasons.append(mixed_reason)
+            if "mixed_fundamental_direction" in quality_result["contradiction_flags"]:
+                manual_categories.append("mixed_fundamental_direction")
+            elif "adjusted_reaction_conflict" in quality_result["contradiction_flags"]:
+                manual_categories.append("adjusted_reaction_conflict")
+            else:
+                manual_categories.append("ambiguous_price_reaction")
         if duplicate_event_flag:
             manual_reasons.append("duplicate_event_context_unresolved")
+            manual_categories.append("duplicate_event_context")
         if _missing_signal(row.get("commercial_signal")):
             manual_reasons.append("missing_commercial_signal")
+            manual_categories.append("missing_required_fields")
         if not _is_valid_status(row, "abnormal_ret_1d_status"):
             manual_reasons.append("invalid_abnormal_ret_1d_status")
+            manual_categories.append("missing_required_fields")
         if any(flag in liquidity for flag in ["low_liquidity", "unknown_liquidity", "below_liquidity_threshold"]):
             manual_reasons.append("liquidity_limitation_requires_review")
+            manual_categories.append("low_liquidity")
         risk_flags = []
         if horizon:
             risk_flags.extend([f"horizon:{flag}" for flag in horizon])
@@ -478,15 +761,58 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
             risk_flags.append(f"adjustment:{basis}")
             if adjustment_flags and adjustment_flags != "none":
                 risk_flags.append(f"adjustment_flags:{adjustment_flags}")
+            if basis == "universe_adjusted_only":
+                manual_categories.append("fallback_universe_only")
             if quality in {"insufficient_peers", "unavailable"}:
                 manual_reasons.append("abnormal_return_adjustment_limited")
+                manual_categories.append("insufficient_peer_evidence")
                 manual_required = True
+        if "20d_horizon_unavailable" in quality_result["evidence_limitations"]:
+            manual_categories.append("insufficient_horizon")
+        if quality_result["event_reaction_pattern"] == "no_clear_reaction":
+            manual_categories.append("ambiguous_price_reaction")
         if risk_flags:
             evidence_parts.append(f"risk_flags={_pipe(risk_flags)}")
+        if quality_result["event_confidence_tier"] in {"manual_review", "not_evaluable"}:
+            manual_reasons.append(f"classification_tier={quality_result['event_confidence_tier']}")
+            manual_categories.append("weak_classification_basis")
+            manual_required = True
+        if quality_result["mixed_event_severity"] == "high":
+            manual_reasons.append("high_mixed_event_severity")
+            manual_required = True
+        auto_safe = (
+            quality_result["adjusted_evidence_supported"]
+            and quality_result["event_confidence_tier"] in {"high", "medium"}
+            and quality_result["mixed_event_severity"] not in {"medium", "high"}
+            and not any(cat in {"low_liquidity", "missing_required_fields", "fallback_universe_only", "insufficient_peer_evidence"} for cat in manual_categories)
+            and quality_result["event_reaction_pattern"] != "horizon_unavailable"
+        )
+        if quality_result["mixed_event_severity"] == "high":
+            priority = "high"
+        elif manual_required and (quality_result["event_confidence_tier"] in {"manual_review", "not_evaluable"} or quality_result["mixed_event_severity"] == "medium"):
+            priority = "medium"
+        else:
+            priority = "low"
+        if "fallback_universe_only" in manual_categories:
+            hint = "Check adjusted peer evidence before relying on the classification."
+        elif "mixed_fundamental_direction" in manual_categories:
+            hint = "Review disclosure context because positive and negative fundamentals coexist."
+        elif "adjusted_reaction_conflict" in manual_categories:
+            hint = "Review whether adjusted price reaction conflicts with the event direction."
+        elif "insufficient_horizon" in manual_categories:
+            hint = "Use short-horizon classification only; do not infer 20d drift."
+        elif manual_required:
+            hint = "Review classification basis and available evidence fields."
+        else:
+            hint = ""
         manual_required = bool(manual_reasons)
-        if manual_required:
+        if quality_result["event_classification_detail"] in {"not_product_ready"}:
+            acceptability = "not_product_ready"
+        elif quality_result["event_confidence_tier"] == "not_evaluable":
+            acceptability = "not_evaluable"
+        elif quality_result["mixed_event_severity"] == "high" or manual_required:
             acceptability = "manual_review_required"
-        elif risk_flags:
+        elif risk_flags or quality_result["event_confidence_tier"] == "medium":
             acceptability = "acceptable_with_limitations"
         else:
             acceptability = "acceptable"
@@ -495,10 +821,24 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
                 "classification_confidence": confidence,
                 "classification_reason": classification_reason,
                 "classification_reason_components": _stable_json(components),
+                "event_classification_detail": quality_result["event_classification_detail"],
+                "event_direction_final": quality_result["event_direction_final"],
+                "event_reaction_pattern": quality_result["event_reaction_pattern"],
+                "event_confidence_tier": quality_result["event_confidence_tier"],
+                "classification_basis_level": quality_result["classification_basis_level"],
+                "classification_evidence_count": quality_result["classification_evidence_count"],
+                "classification_limitation_count": quality_result["classification_limitation_count"],
                 "mixed_event_flag": mixed_event_flag,
                 "mixed_event_reason": mixed_reason if mixed_event_flag else "",
+                "mixed_event_severity": quality_result["mixed_event_severity"],
+                "mixed_event_components": quality_result["mixed_event_components"],
+                "contradiction_flags": quality_result["contradiction_flags"],
                 "manual_review_required": manual_required,
                 "manual_review_reason": _pipe(manual_reasons) if manual_required else "",
+                "manual_review_category": _pipe(manual_categories) if manual_required else "none",
+                "manual_review_priority": priority if manual_required else "low",
+                "manual_review_resolution_hint": hint,
+                "auto_classification_safe_flag": auto_safe,
                 "ranking_score": score,
                 "ranking_score_components": _stable_json(score_components),
                 "primary_signal": primary_signal,
@@ -594,7 +934,11 @@ def _sort_and_rank(
 def _classification_masks(eligible: pd.DataFrame) -> dict[str, pd.Series]:
     positive = eligible["commercial_signal"].map(is_positive_signal)
     negative = eligible["commercial_signal"].map(is_negative_signal)
-    abnormal = pd.to_numeric(eligible["abnormal_ret_1d"], errors="coerce")
+    abnormal = pd.Series(
+        [_classification_quality(row, "", False, _horizon_flags(row), _liquidity_flags(row))["selected_1d"] for _, row in eligible.iterrows()],
+        index=eligible.index,
+        dtype="float64",
+    )
     return {
         "positive_reacted": positive & (abnormal > 0),
         "positive_unreacted": positive & (abnormal < 0),

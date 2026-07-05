@@ -67,7 +67,18 @@ CLASSIFICATION_COLUMNS = [
     "classification",
     "classification_confidence",
     "classification_reason",
+    "event_classification_detail",
+    "event_direction_final",
+    "event_reaction_pattern",
+    "event_confidence_tier",
+    "classification_basis_level",
+    "classification_evidence_count",
+    "classification_limitation_count",
     "mixed_event_flag",
+    "mixed_event_severity",
+    "manual_review_category",
+    "manual_review_priority",
+    "auto_classification_safe_flag",
     "classification_issue",
     "commercial_acceptability",
     "manual_review_required",
@@ -445,30 +456,45 @@ def validate_event_classification(
         expected_positive = label.startswith("positive")
         expected_negative = label.startswith("negative")
         issue = ""
-        confidence = 0.9
+        persisted_confidence = pd.to_numeric(pd.Series([row.get("classification_confidence")]), errors="coerce").iloc[0]
+        confidence = 0.9 if pd.isna(persisted_confidence) else float(persisted_confidence)
+        tier = _safe_text(row.get("event_confidence_tier")) or ("high" if confidence >= 0.82 else "medium" if confidence >= 0.68 else "low")
+        basis = _safe_text(row.get("classification_basis_level") or row.get("abnormal_return_adjustment_basis"))
+        manual_category = _safe_text(row.get("manual_review_category"))
+        manual_priority = _safe_text(row.get("manual_review_priority"))
+        auto_safe = _truthy(row.get("auto_classification_safe_flag"))
+        mixed_severity = _safe_text(row.get("mixed_event_severity")) or ("medium" if mixed else "none")
         if label == "unclassified":
             issue = _safe_text(row.get("unclassified_reason")) or "not_in_product_ranking"
-            confidence = 0.4
+            confidence = min(confidence, 0.4)
         elif label == "excluded":
             issue = _safe_text(row.get("exclusion_reasons")) or "excluded_from_ranking"
-            confidence = 0.5
+            confidence = min(confidence, 0.5)
         elif mixed:
             issue = "mixed_event_requires_manual_review"
-            confidence = 0.55
+            confidence = min(confidence, 0.55)
         elif expected_positive and not positive:
             issue = "positive_ranking_without_positive_signal"
-            confidence = 0.2
+            confidence = min(confidence, 0.2)
         elif expected_negative and not negative:
             issue = "negative_ranking_without_negative_signal"
-            confidence = 0.2
+            confidence = min(confidence, 0.2)
         elif positive and negative:
             issue = "both_positive_and_negative_terms_detected"
-            confidence = 0.45
-        accept = "acceptable" if not issue and confidence >= 0.75 else "manual_review"
+            confidence = min(confidence, 0.45)
+        if tier == "high" and basis == "universe_adjusted_only":
+            issue = "universe_only_high_confidence"
+        elif tier in {"manual_review", "not_evaluable"} and not issue:
+            issue = "classification_requires_manual_review"
+        elif manual_priority == "high" and not issue:
+            issue = "high_priority_manual_review"
+        accept = "acceptable" if not issue and confidence >= 0.75 and auto_safe else "manual_review"
         reason_parts = [
             f"signal={signal or 'missing'}",
             f"bucket={bucket or 'missing'}",
             f"doctypes={doctypes or raw_doc or 'missing'}",
+            f"tier={tier or 'missing'}",
+            f"basis={basis or 'missing'}",
         ]
         rows.append(
             {
@@ -479,10 +505,21 @@ def validate_event_classification(
                 "classification": row.get("classification"),
                 "classification_confidence": confidence,
                 "classification_reason": "; ".join(reason_parts),
+                "event_classification_detail": row.get("event_classification_detail"),
+                "event_direction_final": row.get("event_direction_final"),
+                "event_reaction_pattern": row.get("event_reaction_pattern"),
+                "event_confidence_tier": tier,
+                "classification_basis_level": basis,
+                "classification_evidence_count": row.get("classification_evidence_count"),
+                "classification_limitation_count": row.get("classification_limitation_count"),
                 "mixed_event_flag": bool(mixed),
+                "mixed_event_severity": mixed_severity,
+                "manual_review_category": manual_category,
+                "manual_review_priority": manual_priority,
+                "auto_classification_safe_flag": auto_safe,
                 "classification_issue": issue,
                 "commercial_acceptability": accept,
-                "manual_review_required": bool(issue or confidence < 0.75),
+                "manual_review_required": bool(issue or confidence < 0.75 or tier in {"manual_review", "not_evaluable"}),
             }
         )
     return pd.DataFrame(rows, columns=CLASSIFICATION_COLUMNS)
@@ -910,6 +947,15 @@ def build_critical_issues(
     ]
     if len(class_bad):
         add("classification_basis_issue", "high", "classification", "commercial_quality_*_ranking_enriched.csv", len(class_bad), "Some ranked rows need manual review for event direction or mixed-event context.", "Positive/negative labels may be oversimplified.", "Add explicit event taxonomy confidence and mixed-event handling.")
+    basis_series = classification_validation["classification_basis_level"] if "classification_basis_level" in classification_validation else pd.Series("", index=classification_validation.index)
+    tier_series = classification_validation["event_confidence_tier"] if "event_confidence_tier" in classification_validation else pd.Series("", index=classification_validation.index)
+    universe_high = classification_validation[
+        basis_series.fillna("").eq("universe_adjusted_only")
+        & tier_series.fillna("").eq("high")
+        & ~classification_validation["ranking_file"].isin(AUDIT_FILES)
+    ]
+    if len(universe_high):
+        add("universe_only_high_confidence_classification", "high", "classification", "commercial_quality_*_ranking_enriched.csv", len(universe_high), "Universe-only adjusted evidence produced high-confidence classifications.", "Classification confidence can be overstated when peer-adjusted evidence is unavailable.", "Cap universe-only evidence below high confidence and require manual review or limitations.")
 
     if not abnormal_validation.empty:
         no_sector_size = abnormal_validation[
@@ -960,6 +1006,15 @@ def _scorecard(
         return float(mask.sum() / total) if total else 0.0
 
     class_ratio = ratio(classification_validation["classification_issue"].fillna("").eq(""), len(classification_validation)) if not classification_validation.empty else 0.0
+    adjusted_supported_ratio = (
+        ratio(
+            classification_validation["classification_basis_level"].fillna("").isin(["sector_size_adjusted", "sector_adjusted", "size_adjusted"])
+            & classification_validation["event_confidence_tier"].fillna("").isin(["high", "medium"]),
+            len(classification_validation),
+        )
+        if not classification_validation.empty
+        else 0.0
+    )
     price_ratio = ratio(price_validation["commercial_acceptability"].eq("acceptable"), len(price_validation)) if not price_validation.empty else 0.0
     abnormal_ratio = ratio(abnormal_validation["market_adjustment_detected"].astype(bool), len(abnormal_validation)) if not abnormal_validation.empty else 0.0
     liquidity_ratio = ratio(liquidity_validation["commercial_acceptability"].eq("acceptable"), len(liquidity_validation)) if not liquidity_validation.empty else 0.0
@@ -967,7 +1022,8 @@ def _scorecard(
     signal_good = ratio(signal["commercial_signal_assessment"].eq("directionally_consistent"), len(signal[signal["count"] > 0])) if not signal.empty else 0.0
     blocker_penalty = min(1.0, len(critical[critical["blocks_product_readiness"].astype(bool)]) * 0.12) if not critical.empty else 0.0
     rows = [
-        ("classification", class_ratio * 20, 20, "pass" if class_ratio >= 0.8 else "needs_work", f"clean_ratio={class_ratio:.3f}"),
+        ("classification", class_ratio * 12, 12, "pass" if class_ratio >= 0.8 else "needs_work", f"clean_ratio={class_ratio:.3f}"),
+        ("classification_quality_v2", adjusted_supported_ratio * 8, 8, "pass" if adjusted_supported_ratio >= 0.8 else "needs_work", f"adjusted_supported_ratio={adjusted_supported_ratio:.3f}"),
         ("price_reaction", price_ratio * 15, 15, "pass" if price_ratio >= 0.8 else "needs_work", f"acceptable_ratio={price_ratio:.3f}"),
         ("abnormal_return", abnormal_ratio * 15, 15, "limited" if abnormal_ratio else "fail", "market adjusted only; sector/size absent"),
         ("liquidity", liquidity_ratio * 15, 15, "pass" if liquidity_ratio >= 0.9 else "needs_work", f"acceptable_ratio={liquidity_ratio:.3f}"),
@@ -981,11 +1037,48 @@ def _scorecard(
 def _classification_summary(df: pd.DataFrame) -> dict[str, Any]:
     if df.empty:
         return {"rows": 0}
+    total = len(df)
+    adjusted_supported = (
+        df["classification_basis_level"].fillna("").isin(["sector_size_adjusted", "sector_adjusted", "size_adjusted"])
+        & df["event_confidence_tier"].fillna("").isin(["high", "medium"])
+    )
+    auto_safe = df["auto_classification_safe_flag"].map(_truthy) if "auto_classification_safe_flag" in df else pd.Series([False] * total)
+    high_conf_auto = df["event_confidence_tier"].fillna("").eq("high") & auto_safe
+    high_priority = df["manual_review_priority"].fillna("").eq("high")
+    universe_high = df["classification_basis_level"].fillna("").eq("universe_adjusted_only") & df["event_confidence_tier"].fillna("").eq("high")
+    supported_ratio = float(adjusted_supported.sum() / total) if total else 0.0
+    auto_ratio = float(auto_safe.sum() / total) if total else 0.0
+    quality_score = round(
+        max(
+            0.0,
+            min(
+                100.0,
+                supported_ratio * 55.0
+                + auto_ratio * 25.0
+                + float(df["event_confidence_tier"].fillna("").isin(["high", "medium"]).sum() / total) * 20.0
+                - float(high_priority.sum() / total) * 25.0
+                - float(universe_high.sum() / total) * 40.0,
+            ),
+        ),
+        2,
+    )
     return {
         "rows": int(len(df)),
         "manual_review_required": int(df["manual_review_required"].astype(bool).sum()),
         "mixed_event_rows": int(df["mixed_event_flag"].astype(bool).sum()),
         "issue_counts": df["classification_issue"].replace("", "none").value_counts(dropna=False).to_dict(),
+        "classification_confidence_tier_counts": df["event_confidence_tier"].fillna("missing").value_counts(dropna=False).to_dict(),
+        "event_direction_final_counts": df["event_direction_final"].fillna("missing").value_counts(dropna=False).to_dict(),
+        "event_reaction_pattern_counts": df["event_reaction_pattern"].fillna("missing").value_counts(dropna=False).to_dict(),
+        "manual_review_category_counts": df["manual_review_category"].fillna("missing").value_counts(dropna=False).to_dict(),
+        "manual_review_priority_counts": df["manual_review_priority"].fillna("missing").value_counts(dropna=False).to_dict(),
+        "auto_classification_safe_ratio": auto_ratio,
+        "high_confidence_auto_classified_rows": int(high_conf_auto.sum()),
+        "high_priority_manual_review_rows": int(high_priority.sum()),
+        "mixed_event_severity_counts": df["mixed_event_severity"].fillna("missing").value_counts(dropna=False).to_dict(),
+        "adjusted_evidence_supported_classification_ratio": supported_ratio,
+        "universe_only_high_confidence_rows": int(universe_high.sum()),
+        "classification_quality_score": quality_score,
     }
 
 
@@ -1095,6 +1188,7 @@ def build_commercial_analysis_validity_audit(
     manual = build_manual_review(combined_all, classification, ranking)
     critical = build_critical_issues(ranked, combined_all, classification, ranking, abnormal, financial_summary)
     scorecard = _scorecard(classification, price, abnormal, liquidity, ranking, signal, critical)
+    classification_quality = _classification_summary(classification)
 
     for key, (df, cols) in {
         "code_review": (code_review, CODE_REVIEW_COLUMNS),
@@ -1174,7 +1268,19 @@ def build_commercial_analysis_validity_audit(
             "commercial_dashboard_data.py",
         ],
         "row_counts": _row_counts(frames, financial_summary, prices),
-        "classification_summary": _classification_summary(classification),
+        "classification_summary": classification_quality,
+        "classification_confidence_tier_counts": classification_quality.get("classification_confidence_tier_counts", {}),
+        "event_direction_final_counts": classification_quality.get("event_direction_final_counts", {}),
+        "event_reaction_pattern_counts": classification_quality.get("event_reaction_pattern_counts", {}),
+        "manual_review_category_counts": classification_quality.get("manual_review_category_counts", {}),
+        "manual_review_priority_counts": classification_quality.get("manual_review_priority_counts", {}),
+        "auto_classification_safe_ratio": classification_quality.get("auto_classification_safe_ratio", 0.0),
+        "high_confidence_auto_classified_rows": classification_quality.get("high_confidence_auto_classified_rows", 0),
+        "high_priority_manual_review_rows": classification_quality.get("high_priority_manual_review_rows", 0),
+        "mixed_event_severity_counts": classification_quality.get("mixed_event_severity_counts", {}),
+        "adjusted_evidence_supported_classification_ratio": classification_quality.get("adjusted_evidence_supported_classification_ratio", 0.0),
+        "universe_only_high_confidence_rows": classification_quality.get("universe_only_high_confidence_rows", 0),
+        "classification_quality_score": classification_quality.get("classification_quality_score", 0.0),
         "price_reaction_summary": _simple_summary(price),
         "abnormal_return_summary": _simple_summary(abnormal),
         "commercial_abnormal_return_v2_summary": abnormal_v2,
