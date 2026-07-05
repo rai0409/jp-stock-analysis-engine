@@ -539,8 +539,8 @@ def validate_abnormal_return(combined: pd.DataFrame) -> pd.DataFrame:
     raw_cols = [col for col in ["ret_1d", "ret_3d", "ret_5d", "ret_20d"] if col in combined.columns]
     abnormal_cols = [col for col in ["abnormal_ret_1d", "abnormal_ret_3d", "abnormal_ret_5d", "abnormal_ret_20d"] if col in combined.columns]
     market_detected = any(col.startswith("universe_ret_") for col in combined.columns)
-    sector_detected = any("sector_ret" in col or "sector_adjust" in col for col in combined.columns)
-    size_detected = any("size_ret" in col or "size_adjust" in col or "topix_size_ret" in col for col in combined.columns)
+    sector_detected = any("sector_ret" in col or "sector_adjust" in col or "sector_adjusted" in col for col in combined.columns)
+    size_detected = any("size_ret" in col or "size_adjust" in col or "size_adjusted" in col or "topix_size_ret" in col for col in combined.columns)
     rows = []
     for _, row in combined.iterrows():
         status = _safe_text(row.get("abnormal_ret_1d_status"))
@@ -558,7 +558,12 @@ def validate_abnormal_return(combined: pd.DataFrame) -> pd.DataFrame:
             issues.append(f"abnormal_ret_1d_status={status}")
         if pd.isna(value):
             issues.append("abnormal_ret_1d_missing")
-        accept = "acceptable_with_limitations" if market_detected and not pd.isna(value) else "not_acceptable"
+        basis = _safe_text(row.get("abnormal_return_adjustment_basis"))
+        quality = _safe_text(row.get("abnormal_return_adjustment_quality"))
+        if basis in {"sector_size_adjusted", "sector_and_size_adjusted", "sector_adjusted", "size_adjusted"} and quality in {"acceptable", "acceptable_with_limitations"}:
+            accept = "acceptable"
+        else:
+            accept = "acceptable_with_limitations" if market_detected and not pd.isna(value) else "not_acceptable"
         rows.append(
             {
                 "ticker": row.get("ticker"),
@@ -575,6 +580,50 @@ def validate_abnormal_return(combined: pd.DataFrame) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows, columns=ABNORMAL_COLUMNS)
+
+
+def abnormal_return_v2_summary(combined: pd.DataFrame) -> dict[str, Any]:
+    if combined.empty:
+        return {
+            "sector_adjusted_coverage_ratio": 0.0,
+            "size_adjusted_coverage_ratio": 0.0,
+            "sector_size_adjusted_coverage_ratio": 0.0,
+            "robust_adjusted_score_coverage_ratio": 0.0,
+            "insufficient_sector_peer_rows": 0,
+            "insufficient_size_peer_rows": 0,
+            "insufficient_sector_size_peer_rows": 0,
+            "abnormal_return_adjustment_quality_counts": {},
+            "abnormal_return_adjustment_basis_counts": {},
+            "universe_adjusted_only_rows": 0,
+            "adjustment_unavailable_rows": 0,
+        }
+    total = len(combined)
+
+    def coverage(col: str) -> float:
+        if col not in combined.columns:
+            return 0.0
+        return float(pd.to_numeric(combined[col], errors="coerce").notna().sum() / total)
+
+    def flag_count(col: str) -> int:
+        if col not in combined.columns:
+            return 0
+        return int(combined[col].map(_truthy).sum())
+
+    basis = combined["abnormal_return_adjustment_basis"] if "abnormal_return_adjustment_basis" in combined.columns else pd.Series(dtype=object)
+    quality = combined["abnormal_return_adjustment_quality"] if "abnormal_return_adjustment_quality" in combined.columns else pd.Series(dtype=object)
+    return {
+        "sector_adjusted_coverage_ratio": coverage("sector_adjusted_return_1d"),
+        "size_adjusted_coverage_ratio": coverage("size_adjusted_return_1d"),
+        "sector_size_adjusted_coverage_ratio": coverage("sector_size_adjusted_return_1d"),
+        "robust_adjusted_score_coverage_ratio": coverage("commercial_abnormal_reaction_score"),
+        "insufficient_sector_peer_rows": flag_count("insufficient_sector_peer_flag"),
+        "insufficient_size_peer_rows": flag_count("insufficient_size_peer_flag"),
+        "insufficient_sector_size_peer_rows": flag_count("insufficient_sector_size_peer_flag"),
+        "abnormal_return_adjustment_quality_counts": quality.fillna("missing").value_counts(dropna=False).to_dict(),
+        "abnormal_return_adjustment_basis_counts": basis.fillna("missing").value_counts(dropna=False).to_dict(),
+        "universe_adjusted_only_rows": int((basis == "universe_adjusted_only").sum()) if not basis.empty else 0,
+        "adjustment_unavailable_rows": int((basis == "adjustment_unavailable").sum()) if not basis.empty else 0,
+    }
 
 
 def validate_liquidity(combined: pd.DataFrame) -> pd.DataFrame:
@@ -1039,6 +1088,7 @@ def build_commercial_analysis_validity_audit(
     classification = validate_event_classification(combined_all, financial)
     price = validate_price_reaction(combined_all)
     abnormal = validate_abnormal_return(combined_all)
+    abnormal_v2 = abnormal_return_v2_summary(combined_all)
     liquidity = validate_liquidity(combined_all)
     ranking = validate_ranking(ranked, duplicate_keys)
     signal = build_signal_performance(ranked)
@@ -1127,6 +1177,8 @@ def build_commercial_analysis_validity_audit(
         "classification_summary": _classification_summary(classification),
         "price_reaction_summary": _simple_summary(price),
         "abnormal_return_summary": _simple_summary(abnormal),
+        "commercial_abnormal_return_v2_summary": abnormal_v2,
+        **abnormal_v2,
         "liquidity_summary": _simple_summary(liquidity),
         "ranking_summary": {
             **_simple_summary(ranking, "commercial_acceptability"),

@@ -34,6 +34,20 @@ def _base_row(ticker: str, signal: str, abnormal: float) -> dict[str, object]:
         "ret_20d": 0.01,
         "universe_ret_20d": 0.0,
         "abnormal_ret_20d": abnormal,
+        "abnormal_return_adjustment_basis": "sector_size_adjusted",
+        "abnormal_return_adjustment_quality": "acceptable_with_limitations",
+        "abnormal_return_adjustment_flags": "none",
+        "commercial_abnormal_reaction_score": abnormal * 10,
+        "commercial_abnormal_reaction_score_components": "{\"fixture\":true}",
+        "sector_adjusted_return_1d": abnormal + 0.001,
+        "size_adjusted_return_1d": abnormal + 0.002,
+        "sector_size_adjusted_return_1d": abnormal + 0.003,
+        "sector_peer_count_1d": 5,
+        "size_peer_count_1d": 5,
+        "sector_size_peer_count_1d": 5,
+        "insufficient_sector_peer_flag": False,
+        "insufficient_size_peer_flag": False,
+        "insufficient_sector_size_peer_flag": False,
         "ret_1d_status": "valid",
         "ret_5d_status": "valid",
         "ret_20d_status": "valid",
@@ -138,7 +152,9 @@ def test_commercial_quality_rankings_classify_rank_and_audit_exclusions(tmp_path
         assert col in positive_reacted.columns
     assert positive_reacted["ranking_score"].notna().all()
     assert positive_reacted["ranking_score_components"].astype(str).str.len().gt(0).all()
+    assert positive_reacted["ranking_score_components"].astype(str).str.contains("sector_size_adjusted_return_1d").all()
     assert positive_reacted["evidence_summary"].astype(str).str.len().gt(0).all()
+    assert positive_reacted["evidence_summary"].astype(str).str.contains("adjustment_basis=").all()
     assert "ret_20d_unavailable" in positive_reacted.loc[positive_reacted["ticker"] == "1006", "horizon_flags"].iloc[0]
     assert "long_horizon_unavailable" in positive_reacted.loc[positive_reacted["ticker"] == "1006", "evidence_summary"].iloc[0]
     forbidden = r"buy|sell|hold|recommend|target price"

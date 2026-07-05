@@ -8,6 +8,7 @@ import pytest
 
 from jp_stock_analysis.analysis.jquants_commercial_analysis_validity_audit import (
     OUTPUT_FILES,
+    abnormal_return_v2_summary,
     build_commercial_analysis_validity_audit,
     build_critical_issues,
     build_signal_performance,
@@ -220,6 +221,43 @@ def test_low_liquidity_flag_detected():
     )
     out = validate_liquidity(rows)
     assert bool(out.loc[0, "low_liquidity_in_top_rank_flag"]) is True
+
+
+def test_abnormal_return_v2_summary_detects_adjusted_coverage():
+    rows = pd.DataFrame(
+        [
+            {
+                "sector_adjusted_return_1d": 0.01,
+                "size_adjusted_return_1d": 0.02,
+                "sector_size_adjusted_return_1d": 0.03,
+                "commercial_abnormal_reaction_score": 1.2,
+                "insufficient_sector_peer_flag": False,
+                "insufficient_size_peer_flag": True,
+                "insufficient_sector_size_peer_flag": False,
+                "abnormal_return_adjustment_quality": "acceptable_with_limitations",
+                "abnormal_return_adjustment_basis": "sector_size_adjusted",
+            },
+            {
+                "sector_adjusted_return_1d": None,
+                "size_adjusted_return_1d": None,
+                "sector_size_adjusted_return_1d": None,
+                "commercial_abnormal_reaction_score": 0.0,
+                "insufficient_sector_peer_flag": True,
+                "insufficient_size_peer_flag": True,
+                "insufficient_sector_size_peer_flag": True,
+                "abnormal_return_adjustment_quality": "insufficient_peers",
+                "abnormal_return_adjustment_basis": "universe_adjusted_only",
+            },
+        ]
+    )
+    summary = abnormal_return_v2_summary(rows)
+    assert summary["sector_adjusted_coverage_ratio"] == 0.5
+    assert summary["size_adjusted_coverage_ratio"] == 0.5
+    assert summary["sector_size_adjusted_coverage_ratio"] == 0.5
+    assert summary["robust_adjusted_score_coverage_ratio"] == 1.0
+    assert summary["insufficient_sector_peer_rows"] == 1
+    assert summary["insufficient_size_peer_rows"] == 2
+    assert summary["universe_adjusted_only_rows"] == 1
 
 
 def test_signal_bucket_summary_generated():

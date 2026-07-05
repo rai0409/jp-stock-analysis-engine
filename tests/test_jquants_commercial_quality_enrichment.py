@@ -119,6 +119,12 @@ def test_enrichment_joins_metadata_orders_columns_and_marks_missing(tmp_path):
         "liquidity_flags",
         "product_risk_flags",
         "product_acceptability",
+        "abnormal_return_adjustment_basis",
+        "abnormal_return_adjustment_quality",
+        "commercial_abnormal_reaction_score",
+        "sector_adjusted_return_1d",
+        "size_adjusted_return_1d",
+        "sector_size_adjusted_return_1d",
     ]:
         assert col in enriched.columns
 

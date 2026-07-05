@@ -24,6 +24,7 @@ from jp_stock_analysis.analysis.jquants_commercial_quality_rankings import (
     DEFAULT_POSITIVE_REACTED,
     DEFAULT_POSITIVE_UNREACTED,
     DEFAULT_UNCLASSIFIED_AUDIT,
+    ADJUSTED_ABNORMAL_COLUMNS,
     EVIDENCE_COLUMNS,
 )
 
@@ -89,6 +90,13 @@ DISPLAY_PREFIX = [
     "manual_review_required",
     "product_acceptability",
     "evidence_summary",
+    "abnormal_return_adjustment_basis",
+    "abnormal_return_adjustment_quality",
+    "commercial_abnormal_reaction_score",
+    "sector_adjusted_return_1d",
+    "size_adjusted_return_1d",
+    "sector_size_adjusted_return_1d",
+    "abnormal_return_adjustment_flags",
     "horizon_flags",
     "liquidity_flags",
     "product_risk_flags",
@@ -305,7 +313,7 @@ def _enrich_file(input_path: Path, output_path: Path, metadata: pd.DataFrame) ->
     if "ticker" not in df.columns:
         df["ticker"] = ""
     df["ticker"] = df["ticker"].map(normalize_ticker)
-    for col in EVIDENCE_COLUMNS:
+    for col in [*ADJUSTED_ABNORMAL_COLUMNS, *EVIDENCE_COLUMNS]:
         if col not in df.columns:
             if col in {"mixed_event_flag", "manual_review_required", "duplicate_event_flag"}:
                 df[col] = False

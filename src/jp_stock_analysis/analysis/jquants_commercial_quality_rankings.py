@@ -61,6 +61,38 @@ EVIDENCE_COLUMNS = [
     "product_acceptability",
 ]
 
+ADJUSTED_ABNORMAL_COLUMNS = [
+    "abnormal_return_adjustment_basis",
+    "abnormal_return_adjustment_quality",
+    "abnormal_return_adjustment_flags",
+    "commercial_abnormal_reaction_score",
+    "commercial_abnormal_reaction_score_components",
+    "sector_adjusted_return_1d",
+    "sector_adjusted_return_3d",
+    "sector_adjusted_return_5d",
+    "sector_adjusted_return_20d",
+    "size_adjusted_return_1d",
+    "size_adjusted_return_3d",
+    "size_adjusted_return_5d",
+    "size_adjusted_return_20d",
+    "sector_size_adjusted_return_1d",
+    "sector_size_adjusted_return_3d",
+    "sector_size_adjusted_return_5d",
+    "sector_size_adjusted_return_20d",
+    "sector_peer_count_1d",
+    "size_peer_count_1d",
+    "sector_size_peer_count_1d",
+    "insufficient_sector_peer_flag",
+    "insufficient_size_peer_flag",
+    "insufficient_sector_size_peer_flag",
+    "sector_adjusted_return_1d_robust_z",
+    "sector_adjusted_return_3d_robust_z",
+    "sector_adjusted_return_5d_robust_z",
+    "sector_size_adjusted_return_1d_robust_z",
+    "sector_size_adjusted_return_3d_robust_z",
+    "sector_size_adjusted_return_5d_robust_z",
+]
+
 RANKING_COLUMNS = [
     "rank",
     "ranking_label",
@@ -117,6 +149,7 @@ RANKING_COLUMNS = [
     "price_reaction_status_v2",
     "doctypes",
     "discnos",
+    *ADJUSTED_ABNORMAL_COLUMNS,
     *EVIDENCE_COLUMNS,
 ]
 
@@ -135,6 +168,7 @@ AUDIT_COLUMNS = [
     "is_liquid_enough",
     "abnormal_ret_1d",
     "exclusion_reasons",
+    *ADJUSTED_ABNORMAL_COLUMNS,
     *EVIDENCE_COLUMNS,
 ]
 
@@ -164,6 +198,7 @@ UNCLASSIFIED_AUDIT_COLUMNS = [
     "unclassified_reason",
     "doctypes",
     "discnos",
+    *ADJUSTED_ABNORMAL_COLUMNS,
     *EVIDENCE_COLUMNS,
 ]
 
@@ -356,13 +391,23 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
             horizon_flags=horizon,
             liquidity_flags=liquidity,
         )
-        score = _as_float(row.get("commercial_candidate_score"))
+        adjusted_score = _as_float(row.get("commercial_abnormal_reaction_score"))
+        score = adjusted_score
+        if score is None:
+            score = _as_float(row.get("commercial_candidate_score"))
         if score is None:
             abnormal = _as_float(row.get("abnormal_ret_1d"))
             score = None if abnormal is None else round(abs(abnormal), 8)
         score_components = {
             "commercial_candidate_score": _as_float(row.get("commercial_candidate_score")),
+            "commercial_abnormal_reaction_score": adjusted_score,
+            "commercial_abnormal_reaction_score_components": row.get("commercial_abnormal_reaction_score_components"),
             "abnormal_ret_1d": _as_float(row.get("abnormal_ret_1d")),
+            "sector_adjusted_return_1d": _as_float(row.get("sector_adjusted_return_1d")),
+            "size_adjusted_return_1d": _as_float(row.get("size_adjusted_return_1d")),
+            "sector_size_adjusted_return_1d": _as_float(row.get("sector_size_adjusted_return_1d")),
+            "abnormal_return_adjustment_basis": row.get("abnormal_return_adjustment_basis"),
+            "abnormal_return_adjustment_quality": row.get("abnormal_return_adjustment_quality"),
             "turnover_spike_ratio": _as_float(row.get("turnover_spike_ratio")),
             "avg_turnover_20d": _as_float(row.get("avg_turnover_20d")),
             "sort_bucket": label,
@@ -414,12 +459,6 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
         if _missing_signal(row.get("commercial_signal")):
             data_flags.append("missing_signal")
         manual_required = bool(manual_reasons)
-        if manual_required:
-            acceptability = "manual_review_required"
-        elif risk_flags:
-            acceptability = "acceptable_with_limitations"
-        else:
-            acceptability = "acceptable"
         primary_signal = str(row.get("commercial_signal") or label or "unknown_signal")
         secondary_signal = str(row.get("abnormal_reaction_flag_1d") or row.get("reaction_flag_v2") or _pipe(risk_flags))
         evidence_parts = [
@@ -430,8 +469,27 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
         ]
         if any("20d" in flag for flag in horizon):
             evidence_parts.append("long_horizon_unavailable")
+        basis = str(row.get("abnormal_return_adjustment_basis") or "universe_adjusted_only")
+        quality = str(row.get("abnormal_return_adjustment_quality") or "acceptable_with_limitations")
+        evidence_parts.append(f"adjustment_basis={basis}")
+        evidence_parts.append(f"adjustment_quality={quality}")
+        adjustment_flags = str(row.get("abnormal_return_adjustment_flags") or "")
+        if basis in {"universe_adjusted_only", "adjustment_unavailable"} or quality in {"insufficient_peers", "unavailable"}:
+            risk_flags.append(f"adjustment:{basis}")
+            if adjustment_flags and adjustment_flags != "none":
+                risk_flags.append(f"adjustment_flags:{adjustment_flags}")
+            if quality in {"insufficient_peers", "unavailable"}:
+                manual_reasons.append("abnormal_return_adjustment_limited")
+                manual_required = True
         if risk_flags:
             evidence_parts.append(f"risk_flags={_pipe(risk_flags)}")
+        manual_required = bool(manual_reasons)
+        if manual_required:
+            acceptability = "manual_review_required"
+        elif risk_flags:
+            acceptability = "acceptable_with_limitations"
+        else:
+            acceptability = "acceptable"
         rows.append(
             {
                 "classification_confidence": confidence,
@@ -467,6 +525,7 @@ def _prepare(df: pd.DataFrame) -> pd.DataFrame:
         "commercial_candidate_score",
         "turnover_spike_ratio",
         "avg_turnover_20d",
+        "commercial_abnormal_reaction_score",
     ]:
         if col not in prepared.columns:
             prepared[col] = np.nan
@@ -606,29 +665,29 @@ def build_commercial_quality_rankings(
         eligible[masks["positive_reacted"]],
         "positive_reacted",
         "positive_signal_and_positive_abnormal_1d",
-        ["abnormal_ret_1d", "turnover_spike_ratio", "commercial_candidate_score", "avg_turnover_20d", "DiscDate"],
-        [False, False, False, False, False],
+        ["commercial_abnormal_reaction_score", "abnormal_ret_1d", "turnover_spike_ratio", "commercial_candidate_score", "avg_turnover_20d", "DiscDate"],
+        [False, False, False, False, False, False],
     )
     positive_unreacted = _sort_and_rank(
         eligible[masks["positive_unreacted"]],
         "positive_unreacted",
         "positive_signal_but_negative_abnormal_1d",
-        ["abnormal_ret_1d", "commercial_candidate_score", "turnover_spike_ratio", "avg_turnover_20d", "DiscDate"],
-        [True, False, False, False, False],
+        ["commercial_abnormal_reaction_score", "abnormal_ret_1d", "commercial_candidate_score", "turnover_spike_ratio", "avg_turnover_20d", "DiscDate"],
+        [True, True, False, False, False, False],
     )
     negative_reacted = _sort_and_rank(
         eligible[masks["negative_reacted"]],
         "negative_reacted",
         "negative_signal_and_negative_abnormal_1d",
-        ["abnormal_ret_1d", "turnover_spike_ratio", "commercial_candidate_score", "avg_turnover_20d", "DiscDate"],
-        [True, False, False, False, False],
+        ["commercial_abnormal_reaction_score", "abnormal_ret_1d", "turnover_spike_ratio", "commercial_candidate_score", "avg_turnover_20d", "DiscDate"],
+        [True, True, False, False, False, False],
     )
     negative_reversal = _sort_and_rank(
         eligible[masks["negative_reversal"]],
         "negative_reversal",
         "negative_signal_but_positive_abnormal_1d",
-        ["abnormal_ret_1d", "commercial_candidate_score", "turnover_spike_ratio", "avg_turnover_20d", "DiscDate"],
-        [False, False, False, False, False],
+        ["commercial_abnormal_reaction_score", "abnormal_ret_1d", "commercial_candidate_score", "turnover_spike_ratio", "avg_turnover_20d", "DiscDate"],
+        [False, False, False, False, False, False],
     )
     positive_reacted = _build_evidence_columns(positive_reacted, duplicate_keys)
     positive_unreacted = _build_evidence_columns(positive_unreacted, duplicate_keys)
