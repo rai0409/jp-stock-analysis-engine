@@ -51,6 +51,27 @@ EVIDENCE_COLUMNS = [
     "classification_basis_level",
     "classification_evidence_count",
     "classification_limitation_count",
+    "fundamental_event_type",
+    "fundamental_event_direction",
+    "fundamental_event_strength",
+    "fundamental_event_confidence",
+    "fundamental_event_components",
+    "fundamental_event_flags",
+    "fundamental_evidence_summary",
+    "earnings_surprise_direction",
+    "earnings_surprise_strength",
+    "guidance_revision_direction",
+    "guidance_revision_strength",
+    "dividend_revision_direction",
+    "dividend_revision_strength",
+    "buyback_signal_direction",
+    "buyback_signal_strength",
+    "capital_policy_signal_direction",
+    "capital_policy_signal_strength",
+    "one_off_factor_flag",
+    "one_off_factor_reason",
+    "fundamental_mixed_signal_flag",
+    "fundamental_mixed_signal_reason",
     "mixed_event_flag",
     "mixed_event_reason",
     "mixed_event_severity",
@@ -218,6 +239,8 @@ UNCLASSIFIED_AUDIT_COLUMNS = [
 
 
 def _truthy(value: object) -> bool:
+    if isinstance(value, pd.Series):
+        value = value.dropna().iloc[-1] if not value.dropna().empty else None
     if isinstance(value, bool | np.bool_):
         return bool(value)
     if value is None or pd.isna(value):
@@ -269,6 +292,8 @@ def _pipe(values: list[str]) -> str:
 
 
 def _as_float(value: object) -> float | None:
+    if isinstance(value, pd.Series):
+        value = value.dropna().iloc[-1] if not value.dropna().empty else None
     parsed = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
     return None if pd.isna(parsed) else float(parsed)
 
@@ -281,6 +306,250 @@ def _sign(value: float | None, threshold: float = 0.0) -> int:
     if value < -threshold:
         return -1
     return 0
+
+
+def _direction_from_text(value: object) -> str:
+    if isinstance(value, pd.Series):
+        value = value.dropna().iloc[-1] if not value.dropna().empty else ""
+    text = str("" if value is None or pd.isna(value) else value).strip().lower()
+    if not text or text in {"nan", "none"}:
+        return "neutral_or_unclear"
+    positive_terms = ("upward", "increase", "raised", "raise", "positive", "improve", "improvement")
+    negative_terms = ("downward", "decrease", "lowered", "lower", "negative", "deteriorate", "impairment")
+    pos = any(term in text for term in positive_terms)
+    neg = any(term in text for term in negative_terms)
+    if pos and neg:
+        return "mixed"
+    if pos:
+        return "positive"
+    if neg:
+        return "negative"
+    return "neutral_or_unclear"
+
+
+def _strength_from_pct(value: float | None) -> str:
+    if value is None:
+        return "not_evaluable"
+    magnitude = abs(value)
+    if magnitude >= 10:
+        return "strong"
+    if magnitude >= 3:
+        return "moderate"
+    if magnitude > 0:
+        return "weak"
+    return "not_evaluable"
+
+
+def _combine_strength(values: list[str]) -> str:
+    for strength in ("strong", "moderate", "weak"):
+        if strength in values:
+            return strength
+    return "not_evaluable"
+
+
+def _component_from_numeric_changes(row: pd.Series, columns: list[str]) -> tuple[str, str, list[str]]:
+    observed: list[float] = []
+    used: list[str] = []
+    for col in columns:
+        value = _as_float(row.get(col))
+        if value is None:
+            continue
+        observed.append(value)
+        used.append(col)
+    if not observed:
+        return "neutral_or_unclear", "not_evaluable", []
+    positives = [value for value in observed if value > 0]
+    negatives = [value for value in observed if value < 0]
+    strengths = [_strength_from_pct(value) for value in observed if value != 0]
+    if positives and negatives:
+        return "mixed", _combine_strength(strengths), used
+    if positives:
+        return "positive", _combine_strength(strengths), used
+    if negatives:
+        return "negative", _combine_strength(strengths), used
+    return "neutral_or_unclear", "not_evaluable", used
+
+
+def _diff_direction(row: pd.Series, current_cols: list[str], prior_cols: list[str]) -> tuple[str, str, list[str]]:
+    pairs = []
+    for current in current_cols:
+        cur = _as_float(row.get(current))
+        if cur is None:
+            continue
+        for prior in prior_cols:
+            prev = _as_float(row.get(prior))
+            if prev is None:
+                continue
+            if abs(prev) > 1e-12:
+                pct = ((cur - prev) / abs(prev)) * 100.0
+                pairs.append((pct, f"{current}_vs_{prior}"))
+                break
+    if not pairs:
+        return "neutral_or_unclear", "not_evaluable", []
+    temp = pd.Series({name: pct for pct, name in pairs})
+    return _component_from_numeric_changes(temp, [name for _, name in pairs])
+
+
+def _fundamental_event_evidence(row: pd.Series) -> dict[str, Any]:
+    flags: list[str] = []
+    components: dict[str, Any] = {}
+
+    guidance_dir_text = _direction_from_text(row.get("earnings_revision_direction"))
+    guidance_num_dir, guidance_num_strength, guidance_num_cols = _component_from_numeric_changes(
+        row,
+        ["change_sales_pct", "change_op_pct", "change_np_pct", "change_eps_pct"],
+    )
+    if guidance_dir_text in {"positive", "negative", "mixed"}:
+        guidance_direction = guidance_dir_text
+        guidance_strength = guidance_num_strength if guidance_num_strength != "not_evaluable" else "moderate"
+        guidance_cols = ["earnings_revision_direction", *guidance_num_cols]
+    elif guidance_num_dir in {"positive", "negative", "mixed"}:
+        guidance_direction = guidance_num_dir
+        guidance_strength = guidance_num_strength
+        guidance_cols = guidance_num_cols
+    else:
+        guidance_direction, guidance_strength, guidance_cols = "neutral_or_unclear", "not_evaluable", []
+
+    dividend_dir_text = _direction_from_text(row.get("dividend_revision_direction"))
+    dividend_num_dir, dividend_num_strength, dividend_num_cols = _component_from_numeric_changes(row, ["change_fdivann_pct"])
+    dividend_diff_dir, dividend_diff_strength, dividend_diff_cols = _diff_direction(
+        row,
+        ["FDivAnn", "FDivFY", "NxFDivAnn"],
+        ["DivAnn", "DivFY"],
+    )
+    if dividend_dir_text in {"positive", "negative", "mixed"}:
+        dividend_direction = dividend_dir_text
+        dividend_strength = _combine_strength([dividend_num_strength, dividend_diff_strength, "moderate"])
+        dividend_cols = ["dividend_revision_direction", *dividend_num_cols, *dividend_diff_cols]
+    elif dividend_num_dir in {"positive", "negative", "mixed"}:
+        dividend_direction, dividend_strength, dividend_cols = dividend_num_dir, dividend_num_strength, dividend_num_cols
+    elif dividend_diff_dir in {"positive", "negative", "mixed"}:
+        dividend_direction, dividend_strength, dividend_cols = dividend_diff_dir, dividend_diff_strength, dividend_diff_cols
+    else:
+        dividend_direction, dividend_strength, dividend_cols = "neutral_or_unclear", "not_evaluable", []
+
+    earnings_dir, earnings_strength, earnings_cols = _diff_direction(
+        row,
+        ["Sales", "OP", "OdP", "NP", "EPS", "NCSales", "NCOP", "NCNP", "NCEPS"],
+        ["FSales", "FOP", "FOdP", "FNP", "FEPS", "FNCSales", "FNCOP", "FNCNP", "FNCEPS"],
+    )
+
+    text_values: list[str] = []
+    for col in ["commercial_signal", "candidate_bucket", "event_combo", "doctypes", "DocType", "MatChgSub"]:
+        value = row.get(col)
+        if isinstance(value, pd.Series):
+            value = value.dropna().iloc[-1] if not value.dropna().empty else ""
+        text_values.append(str("" if value is None or pd.isna(value) else value))
+    text_blob = " ".join(text_values).lower()
+    buyback_hit = any(term in text_blob for term in ["buyback", "share repurchase", "treasury stock", "own shares"])
+    cancellation_hit = any(term in text_blob for term in ["share cancellation", "cancellation of treasury", "retirement of treasury"])
+    buyback_direction = "positive" if buyback_hit else "neutral_or_unclear"
+    buyback_strength = "moderate" if buyback_hit else "not_evaluable"
+    capital_direction = "positive" if cancellation_hit else "neutral_or_unclear"
+    capital_strength = "moderate" if cancellation_hit else "not_evaluable"
+    one_off = any(term in text_blob for term in ["one-off", "one off", "extraordinary", "special gain", "special loss", "impairment"])
+    one_off_reason = "one_off_or_special_item_text_detected" if one_off else ""
+
+    component_dirs = {
+        "earnings_surprise": earnings_dir,
+        "guidance_revision": guidance_direction,
+        "dividend_revision": dividend_direction,
+        "buyback_signal": buyback_direction,
+        "capital_policy_signal": capital_direction,
+    }
+    component_strengths = {
+        "earnings_surprise": earnings_strength,
+        "guidance_revision": guidance_strength,
+        "dividend_revision": dividend_strength,
+        "buyback_signal": buyback_strength,
+        "capital_policy_signal": capital_strength,
+    }
+    usable = {name: direction for name, direction in component_dirs.items() if direction in {"positive", "negative", "mixed"}}
+    positives = [name for name, direction in usable.items() if direction == "positive"]
+    negatives = [name for name, direction in usable.items() if direction == "negative"]
+    mixed_components = [name for name, direction in usable.items() if direction == "mixed"]
+    if mixed_components or (positives and negatives):
+        fundamental_direction = "mixed"
+        mixed_flag = True
+        mixed_reason = _pipe([*mixed_components, *[f"positive:{x}" for x in positives], *[f"negative:{x}" for x in negatives]])
+    elif positives:
+        fundamental_direction = "positive"
+        mixed_flag = False
+        mixed_reason = ""
+    elif negatives:
+        fundamental_direction = "negative"
+        mixed_flag = False
+        mixed_reason = ""
+    else:
+        fundamental_direction = "insufficient_evidence"
+        mixed_flag = False
+        mixed_reason = ""
+        flags.append("insufficient_fundamental_evidence")
+
+    if guidance_direction in {"positive", "negative", "mixed"}:
+        event_type = "guidance_revision"
+    elif dividend_direction in {"positive", "negative", "mixed"}:
+        event_type = "dividend_revision"
+    elif buyback_direction == "positive" or capital_direction == "positive":
+        event_type = "buyback_or_capital_policy"
+    elif earnings_dir in {"positive", "negative", "mixed"}:
+        event_type = "earnings_result"
+    elif fundamental_direction == "mixed":
+        event_type = "mixed_financial_event"
+    else:
+        event_type = "insufficient_fundamental_evidence"
+
+    strength = _combine_strength([component_strengths[name] for name in usable] or ["not_evaluable"])
+    if fundamental_direction == "insufficient_evidence":
+        confidence = "not_evaluable"
+    elif strength in {"strong", "moderate"} and len(usable) >= 2:
+        confidence = "high"
+    elif strength in {"strong", "moderate"}:
+        confidence = "medium"
+    else:
+        confidence = "low"
+    if one_off:
+        flags.append("one_off_factor_present")
+        if confidence == "high":
+            confidence = "medium"
+
+    components.update(
+        {
+            "guidance_columns": guidance_cols,
+            "dividend_columns": dividend_cols,
+            "earnings_surprise_columns": earnings_cols,
+            "component_directions": component_dirs,
+            "component_strengths": component_strengths,
+        }
+    )
+    component_text = _stable_json(components)
+    summary = (
+        f"fundamental_event={event_type}; fundamental_direction={fundamental_direction}; "
+        f"fundamental_confidence={confidence}; components={_pipe(list(usable.keys()))}"
+    )
+    return {
+        "fundamental_event_type": event_type,
+        "fundamental_event_direction": fundamental_direction,
+        "fundamental_event_strength": strength,
+        "fundamental_event_confidence": confidence,
+        "fundamental_event_components": component_text,
+        "fundamental_event_flags": _pipe(flags),
+        "fundamental_evidence_summary": summary,
+        "earnings_surprise_direction": earnings_dir,
+        "earnings_surprise_strength": earnings_strength,
+        "guidance_revision_direction": guidance_direction,
+        "guidance_revision_strength": guidance_strength,
+        "dividend_revision_direction": dividend_direction,
+        "dividend_revision_strength": dividend_strength,
+        "buyback_signal_direction": buyback_direction,
+        "buyback_signal_strength": buyback_strength,
+        "capital_policy_signal_direction": capital_direction,
+        "capital_policy_signal_strength": capital_strength,
+        "one_off_factor_flag": bool(one_off),
+        "one_off_factor_reason": one_off_reason,
+        "fundamental_mixed_signal_flag": bool(mixed_flag),
+        "fundamental_mixed_signal_reason": mixed_reason,
+    }
 
 
 def _selected_adjusted_evidence(row: pd.Series) -> dict[str, Any]:
@@ -338,23 +607,13 @@ def _selected_adjusted_evidence(row: pd.Series) -> dict[str, Any]:
 
 
 def _fundamental_direction(row: pd.Series) -> str:
-    positive = is_positive_signal(row.get("commercial_signal"))
-    negative = is_negative_signal(row.get("commercial_signal"))
-    earnings = str(row.get("earnings_revision_direction", "")).lower()
-    dividend = str(row.get("dividend_revision_direction", "")).lower()
-    pos_terms = positive or "upward" in earnings or "increase" in earnings or "increase" in dividend or "upward" in dividend
-    neg_terms = negative or "downward" in earnings or "decrease" in earnings or "decrease" in dividend or "downward" in dividend
-    if pos_terms and neg_terms:
-        return "mixed"
-    if pos_terms:
-        return "positive"
-    if neg_terms:
-        return "negative"
-    return "neutral_or_unclear"
+    direction = str(_fundamental_event_evidence(row)["fundamental_event_direction"])
+    return "neutral_or_unclear" if direction == "insufficient_evidence" else direction
 
 
 def _classification_quality(row: pd.Series, label: str, duplicate_event_flag: bool, horizon_flags: list[str], liquidity_flags: list[str]) -> dict[str, Any]:
     evidence = _selected_adjusted_evidence(row)
+    fundamental_evidence = _fundamental_event_evidence(row)
     values = evidence["values"]
     s1 = _sign(values.get("1d"))
     s3 = _sign(values.get("3d"))
@@ -363,7 +622,7 @@ def _classification_quality(row: pd.Series, label: str, duplicate_event_flag: bo
     short_signs = [s for s in (s1, s3, s5) if s]
     short_sum = sum(short_signs)
     reaction_direction = 1 if short_sum > 0 else -1 if short_sum < 0 else 0
-    fundamental = _fundamental_direction(row)
+    fundamental = str(fundamental_evidence["fundamental_event_direction"])
     expected = 1 if fundamental == "positive" else -1 if fundamental == "negative" else 0
 
     contradiction_flags: list[str] = []
@@ -371,8 +630,10 @@ def _classification_quality(row: pd.Series, label: str, duplicate_event_flag: bo
     if fundamental == "mixed":
         contradiction_flags.append("mixed_fundamental_direction")
         components.append("fundamental_direction_conflict")
+    if fundamental == "insufficient_evidence":
+        contradiction_flags.append("insufficient_fundamental_evidence")
     if expected and reaction_direction and expected != reaction_direction:
-        contradiction_flags.append("adjusted_reaction_conflict")
+        contradiction_flags.append("fundamental_price_reaction_conflict")
         components.append("fundamental_vs_adjusted_reaction")
     if s1 and s5 and s1 != s5:
         contradiction_flags.append("1d_5d_reaction_conflict")
@@ -398,18 +659,18 @@ def _classification_quality(row: pd.Series, label: str, duplicate_event_flag: bo
     else:
         reaction_pattern = "no_clear_reaction"
 
-    if fundamental == "mixed" or ("adjusted_reaction_conflict" in contradiction_flags and evidence["supported"]):
+    if fundamental == "mixed" or ("fundamental_price_reaction_conflict" in contradiction_flags and evidence["supported"]):
         direction_final = "mixed"
     elif expected > 0:
         direction_final = "positive"
     elif expected < 0:
         direction_final = "negative"
-    elif evidence["evidence_count"] == 0:
+    elif evidence["evidence_count"] == 0 or fundamental == "insufficient_evidence":
         direction_final = "insufficient_evidence"
     else:
         direction_final = "neutral_or_unclear"
 
-    severe_flags = {"mixed_fundamental_direction", "adjusted_reaction_conflict", "1d_20d_reaction_conflict", "missing_required_fields"}
+    severe_flags = {"mixed_fundamental_direction", "fundamental_price_reaction_conflict", "1d_20d_reaction_conflict", "missing_required_fields", "insufficient_fundamental_evidence"}
     if len([flag for flag in contradiction_flags if flag in severe_flags]) >= 2:
         mixed_severity = "high"
     elif any(flag in contradiction_flags for flag in severe_flags):
@@ -454,6 +715,12 @@ def _classification_quality(row: pd.Series, label: str, duplicate_event_flag: bo
     confidence = 0.94
     if not evidence["supported"]:
         confidence -= 0.22
+    if fundamental_evidence["fundamental_event_confidence"] == "not_evaluable":
+        confidence -= 0.24
+    elif fundamental_evidence["fundamental_event_confidence"] == "low":
+        confidence -= 0.14
+    elif fundamental_evidence["fundamental_event_confidence"] == "medium":
+        confidence -= 0.04
     if evidence["basis"] == "universe_adjusted_only":
         confidence = min(confidence, 0.69)
     if evidence["quality"] == "acceptable_with_limitations":
@@ -476,13 +743,14 @@ def _classification_quality(row: pd.Series, label: str, duplicate_event_flag: bo
         confidence -= 0.03
     confidence = round(max(0.0, min(1.0, confidence)), 2)
 
+    fundamental_supported = fundamental_evidence["fundamental_event_confidence"] in {"high", "medium"} and fundamental in {"positive", "negative"}
     if evidence["evidence_count"] == 0:
         tier = "not_evaluable"
     elif mixed_severity == "high":
         tier = "manual_review"
-    elif confidence >= 0.82 and evidence["supported"] and evidence["basis"] != "universe_adjusted_only":
+    elif confidence >= 0.82 and evidence["supported"] and fundamental_supported and evidence["basis"] != "universe_adjusted_only":
         tier = "high"
-    elif confidence >= 0.68 and evidence["basis"] != "universe_adjusted_only":
+    elif confidence >= 0.68 and evidence["basis"] != "universe_adjusted_only" and fundamental_evidence["fundamental_event_confidence"] != "not_evaluable":
         tier = "medium"
     elif confidence >= 0.45:
         tier = "low"
@@ -502,6 +770,8 @@ def _classification_quality(row: pd.Series, label: str, duplicate_event_flag: bo
         "mixed_event_components": _pipe(components),
         "contradiction_flags": _pipe(contradiction_flags),
         "adjusted_evidence_supported": bool(evidence["supported"]),
+        "fundamental_evidence_supported": bool(fundamental_supported),
+        **fundamental_evidence,
         "evidence_limitations": evidence["limitations"],
         "selected_1d": values.get("1d"),
     }
@@ -589,6 +859,16 @@ def _row_duplicate_flag(row: pd.Series, duplicate_keys: set[tuple[str, str, str]
     return (ticker, str(row.get("DiscDate", "")), str("" if pd.isna(key_value) else key_value)) in duplicate_keys
 
 
+def _unique_existing_columns(df: pd.DataFrame, columns: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for col in columns:
+        if col in df.columns and col not in seen:
+            out.append(col)
+            seen.add(col)
+    return out
+
+
 def _classification_confidence(
     row: pd.Series,
     *,
@@ -666,6 +946,9 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
             "commercial_abnormal_reaction_score": adjusted_score,
             "commercial_abnormal_reaction_score_components": row.get("commercial_abnormal_reaction_score_components"),
             "adjusted_return_basis": quality_result["classification_basis_level"],
+            "fundamental_event_direction": quality_result["fundamental_event_direction"],
+            "fundamental_event_strength": quality_result["fundamental_event_strength"],
+            "fundamental_event_confidence": quality_result["fundamental_event_confidence"],
             "classification_confidence": confidence,
             "event_confidence_tier": quality_result["event_confidence_tier"],
             "event_classification_detail": quality_result["event_classification_detail"],
@@ -687,6 +970,8 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
             "commercial_signal": row.get("commercial_signal"),
             "positive_signal": positive,
             "negative_signal": negative,
+            "fundamental_event_direction": quality_result["fundamental_event_direction"],
+            "fundamental_event_type": quality_result["fundamental_event_type"],
             "abnormal_ret_1d": _as_float(row.get("abnormal_ret_1d")),
             "abnormal_ret_1d_status": row.get("abnormal_ret_1d_status"),
             "ret_1d_status": row.get("ret_1d_status"),
@@ -707,8 +992,10 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
             manual_reasons.append(mixed_reason)
             if "mixed_fundamental_direction" in quality_result["contradiction_flags"]:
                 manual_categories.append("mixed_fundamental_direction")
-            elif "adjusted_reaction_conflict" in quality_result["contradiction_flags"]:
+            elif "fundamental_price_reaction_conflict" in quality_result["contradiction_flags"]:
                 manual_categories.append("adjusted_reaction_conflict")
+            elif "insufficient_fundamental_evidence" in quality_result["contradiction_flags"]:
+                manual_categories.append("weak_fundamental_evidence")
             else:
                 manual_categories.append("ambiguous_price_reaction")
         if duplicate_event_flag:
@@ -747,9 +1034,12 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
         evidence_parts = [
             f"classification={label or 'unclassified'}",
             f"signal={primary_signal}",
+            f"fundamental={quality_result['fundamental_event_direction']}",
+            f"fundamental_confidence={quality_result['fundamental_event_confidence']}",
             f"abnormal_ret_1d={_as_float(row.get('abnormal_ret_1d'))}",
             f"liquidity={row.get('liquidity_bucket', 'unknown')}",
         ]
+        evidence_parts.append(str(quality_result["fundamental_evidence_summary"]))
         if any("20d" in flag for flag in horizon):
             evidence_parts.append("long_horizon_unavailable")
         basis = str(row.get("abnormal_return_adjustment_basis") or "universe_adjusted_only")
@@ -771,6 +1061,18 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
             manual_categories.append("insufficient_horizon")
         if quality_result["event_reaction_pattern"] == "no_clear_reaction":
             manual_categories.append("ambiguous_price_reaction")
+        if quality_result["fundamental_event_direction"] == "insufficient_evidence":
+            manual_reasons.append("insufficient_fundamental_evidence")
+            manual_categories.append("weak_fundamental_evidence")
+        if quality_result["fundamental_event_direction"] == "mixed":
+            manual_reasons.append("mixed_fundamental_evidence")
+            manual_categories.append("mixed_fundamental_direction")
+        if "fundamental_price_reaction_conflict" in quality_result["contradiction_flags"]:
+            manual_reasons.append("fundamental_price_reaction_conflict")
+            manual_categories.append("adjusted_reaction_conflict")
+        if quality_result["one_off_factor_flag"]:
+            manual_reasons.append("one_off_factor_present")
+            manual_categories.append("weak_fundamental_evidence")
         if risk_flags:
             evidence_parts.append(f"risk_flags={_pipe(risk_flags)}")
         if quality_result["event_confidence_tier"] in {"manual_review", "not_evaluable"}:
@@ -782,9 +1084,10 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
             manual_required = True
         auto_safe = (
             quality_result["adjusted_evidence_supported"]
+            and quality_result["fundamental_evidence_supported"]
             and quality_result["event_confidence_tier"] in {"high", "medium"}
             and quality_result["mixed_event_severity"] not in {"medium", "high"}
-            and not any(cat in {"low_liquidity", "missing_required_fields", "fallback_universe_only", "insufficient_peer_evidence"} for cat in manual_categories)
+            and not any(cat in {"low_liquidity", "missing_required_fields", "fallback_universe_only", "insufficient_peer_evidence", "weak_fundamental_evidence", "mixed_fundamental_direction", "adjusted_reaction_conflict"} for cat in manual_categories)
             and quality_result["event_reaction_pattern"] != "horizon_unavailable"
         )
         if quality_result["mixed_event_severity"] == "high":
@@ -799,6 +1102,8 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
             hint = "Review disclosure context because positive and negative fundamentals coexist."
         elif "adjusted_reaction_conflict" in manual_categories:
             hint = "Review whether adjusted price reaction conflicts with the event direction."
+        elif "weak_fundamental_evidence" in manual_categories:
+            hint = "Review local fundamental fields because event direction evidence is limited."
         elif "insufficient_horizon" in manual_categories:
             hint = "Use short-horizon classification only; do not infer 20d drift."
         elif manual_required:
@@ -828,6 +1133,27 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
                 "classification_basis_level": quality_result["classification_basis_level"],
                 "classification_evidence_count": quality_result["classification_evidence_count"],
                 "classification_limitation_count": quality_result["classification_limitation_count"],
+                "fundamental_event_type": quality_result["fundamental_event_type"],
+                "fundamental_event_direction": quality_result["fundamental_event_direction"],
+                "fundamental_event_strength": quality_result["fundamental_event_strength"],
+                "fundamental_event_confidence": quality_result["fundamental_event_confidence"],
+                "fundamental_event_components": quality_result["fundamental_event_components"],
+                "fundamental_event_flags": quality_result["fundamental_event_flags"],
+                "fundamental_evidence_summary": quality_result["fundamental_evidence_summary"],
+                "earnings_surprise_direction": quality_result["earnings_surprise_direction"],
+                "earnings_surprise_strength": quality_result["earnings_surprise_strength"],
+                "guidance_revision_direction": quality_result["guidance_revision_direction"],
+                "guidance_revision_strength": quality_result["guidance_revision_strength"],
+                "dividend_revision_direction": quality_result["dividend_revision_direction"],
+                "dividend_revision_strength": quality_result["dividend_revision_strength"],
+                "buyback_signal_direction": quality_result["buyback_signal_direction"],
+                "buyback_signal_strength": quality_result["buyback_signal_strength"],
+                "capital_policy_signal_direction": quality_result["capital_policy_signal_direction"],
+                "capital_policy_signal_strength": quality_result["capital_policy_signal_strength"],
+                "one_off_factor_flag": quality_result["one_off_factor_flag"],
+                "one_off_factor_reason": quality_result["one_off_factor_reason"],
+                "fundamental_mixed_signal_flag": quality_result["fundamental_mixed_signal_flag"],
+                "fundamental_mixed_signal_reason": quality_result["fundamental_mixed_signal_reason"],
                 "mixed_event_flag": mixed_event_flag,
                 "mixed_event_reason": mixed_reason if mixed_event_flag else "",
                 "mixed_event_severity": quality_result["mixed_event_severity"],
@@ -928,7 +1254,7 @@ def _sort_and_rank(
             ranked[col] = np.nan
     ranked = ranked.sort_values(sort_columns, ascending=ascending, na_position="last")
     ranked.insert(0, "rank", range(1, len(ranked) + 1))
-    return ranked[[col for col in RANKING_COLUMNS if col in ranked.columns]]
+    return ranked[_unique_existing_columns(ranked, RANKING_COLUMNS)]
 
 
 def _classification_masks(eligible: pd.DataFrame) -> dict[str, pd.Series]:
@@ -1061,12 +1387,12 @@ def build_commercial_quality_rankings(
         if col not in audit.columns:
             audit[col] = np.nan
     audit = _build_evidence_columns(audit, duplicate_keys)
-    _write_csv(excluded_audit_path, audit[[col for col in AUDIT_COLUMNS if col in audit.columns]])
+    _write_csv(excluded_audit_path, audit[_unique_existing_columns(audit, AUDIT_COLUMNS)])
     for col in UNCLASSIFIED_AUDIT_COLUMNS:
         if col not in unclassified.columns:
             unclassified[col] = np.nan
     unclassified = _build_evidence_columns(unclassified, duplicate_keys)
-    _write_csv(unclassified_audit_path, unclassified[[col for col in UNCLASSIFIED_AUDIT_COLUMNS if col in unclassified.columns]])
+    _write_csv(unclassified_audit_path, unclassified[_unique_existing_columns(unclassified, UNCLASSIFIED_AUDIT_COLUMNS)])
 
     reason_counts: dict[str, int] = {}
     for reasons in reason_lists:

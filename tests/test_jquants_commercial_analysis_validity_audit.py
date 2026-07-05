@@ -76,6 +76,13 @@ def _write_minimal_inputs(base):
         "manual_review_category": "none",
         "manual_review_priority": "low",
         "auto_classification_safe_flag": True,
+        "fundamental_event_type": "guidance_revision",
+        "fundamental_event_direction": "positive",
+        "fundamental_event_strength": "strong",
+        "fundamental_event_confidence": "high",
+        "fundamental_mixed_signal_flag": False,
+        "fundamental_mixed_signal_reason": "",
+        "fundamental_event_flags": "none",
     }
     pd.DataFrame([ranking_row]).to_csv(
         analysis / "commercial_quality_positive_reacted_ranking_enriched.csv", index=False
@@ -283,6 +290,12 @@ def test_classification_quality_v2_report_metrics(tmp_path):
     assert report["high_priority_manual_review_rows"] == 0
     assert report["universe_only_high_confidence_rows"] == 0
     assert report["classification_quality_score"] > 0
+    assert report["fundamental_event_direction_counts"]["positive"] == 1
+    assert report["fundamental_event_confidence_counts"]["high"] == 1
+    assert report["insufficient_fundamental_evidence_rows"] == 0
+    assert report["fundamental_price_confirmation_ratio"] == 1.0
+    assert report["fundamental_price_conflict_rows"] == 0
+    assert report["fundamental_evidence_quality_score"] > 0
 
 
 def test_universe_only_high_confidence_is_critical_issue():

@@ -74,6 +74,13 @@ CLASSIFICATION_COLUMNS = [
     "classification_basis_level",
     "classification_evidence_count",
     "classification_limitation_count",
+    "fundamental_event_type",
+    "fundamental_event_direction",
+    "fundamental_event_strength",
+    "fundamental_event_confidence",
+    "fundamental_mixed_signal_flag",
+    "fundamental_mixed_signal_reason",
+    "fundamental_event_flags",
     "mixed_event_flag",
     "mixed_event_severity",
     "manual_review_category",
@@ -460,6 +467,9 @@ def validate_event_classification(
         confidence = 0.9 if pd.isna(persisted_confidence) else float(persisted_confidence)
         tier = _safe_text(row.get("event_confidence_tier")) or ("high" if confidence >= 0.82 else "medium" if confidence >= 0.68 else "low")
         basis = _safe_text(row.get("classification_basis_level") or row.get("abnormal_return_adjustment_basis"))
+        fundamental_direction = _safe_text(row.get("fundamental_event_direction"))
+        fundamental_confidence = _safe_text(row.get("fundamental_event_confidence"))
+        fundamental_mixed = _truthy(row.get("fundamental_mixed_signal_flag"))
         manual_category = _safe_text(row.get("manual_review_category"))
         manual_priority = _safe_text(row.get("manual_review_priority"))
         auto_safe = _truthy(row.get("auto_classification_safe_flag"))
@@ -470,6 +480,12 @@ def validate_event_classification(
         elif label == "excluded":
             issue = _safe_text(row.get("exclusion_reasons")) or "excluded_from_ranking"
             confidence = min(confidence, 0.5)
+        elif fundamental_mixed or fundamental_direction == "mixed":
+            issue = "mixed_fundamental_event_requires_manual_review"
+            confidence = min(confidence, 0.55)
+        elif fundamental_direction == "insufficient_evidence" or fundamental_confidence == "not_evaluable":
+            issue = "insufficient_fundamental_evidence"
+            confidence = min(confidence, 0.62)
         elif mixed:
             issue = "mixed_event_requires_manual_review"
             confidence = min(confidence, 0.55)
@@ -495,6 +511,8 @@ def validate_event_classification(
             f"doctypes={doctypes or raw_doc or 'missing'}",
             f"tier={tier or 'missing'}",
             f"basis={basis or 'missing'}",
+            f"fundamental_direction={fundamental_direction or 'missing'}",
+            f"fundamental_confidence={fundamental_confidence or 'missing'}",
         ]
         rows.append(
             {
@@ -512,6 +530,13 @@ def validate_event_classification(
                 "classification_basis_level": basis,
                 "classification_evidence_count": row.get("classification_evidence_count"),
                 "classification_limitation_count": row.get("classification_limitation_count"),
+                "fundamental_event_type": row.get("fundamental_event_type"),
+                "fundamental_event_direction": fundamental_direction,
+                "fundamental_event_strength": row.get("fundamental_event_strength"),
+                "fundamental_event_confidence": fundamental_confidence,
+                "fundamental_mixed_signal_flag": fundamental_mixed,
+                "fundamental_mixed_signal_reason": row.get("fundamental_mixed_signal_reason"),
+                "fundamental_event_flags": row.get("fundamental_event_flags"),
                 "mixed_event_flag": bool(mixed),
                 "mixed_event_severity": mixed_severity,
                 "manual_review_category": manual_category,
@@ -1015,6 +1040,11 @@ def _scorecard(
         if not classification_validation.empty
         else 0.0
     )
+    fundamental_supported_ratio = (
+        ratio(classification_validation["fundamental_event_confidence"].fillna("").isin(["high", "medium"]), len(classification_validation))
+        if not classification_validation.empty and "fundamental_event_confidence" in classification_validation
+        else 0.0
+    )
     price_ratio = ratio(price_validation["commercial_acceptability"].eq("acceptable"), len(price_validation)) if not price_validation.empty else 0.0
     abnormal_ratio = ratio(abnormal_validation["market_adjustment_detected"].astype(bool), len(abnormal_validation)) if not abnormal_validation.empty else 0.0
     liquidity_ratio = ratio(liquidity_validation["commercial_acceptability"].eq("acceptable"), len(liquidity_validation)) if not liquidity_validation.empty else 0.0
@@ -1024,10 +1054,11 @@ def _scorecard(
     rows = [
         ("classification", class_ratio * 12, 12, "pass" if class_ratio >= 0.8 else "needs_work", f"clean_ratio={class_ratio:.3f}"),
         ("classification_quality_v2", adjusted_supported_ratio * 8, 8, "pass" if adjusted_supported_ratio >= 0.8 else "needs_work", f"adjusted_supported_ratio={adjusted_supported_ratio:.3f}"),
+        ("fundamental_event_evidence", fundamental_supported_ratio * 8, 8, "pass" if fundamental_supported_ratio >= 0.7 else "needs_work", f"fundamental_supported_ratio={fundamental_supported_ratio:.3f}"),
         ("price_reaction", price_ratio * 15, 15, "pass" if price_ratio >= 0.8 else "needs_work", f"acceptable_ratio={price_ratio:.3f}"),
-        ("abnormal_return", abnormal_ratio * 15, 15, "limited" if abnormal_ratio else "fail", "market adjusted only; sector/size absent"),
-        ("liquidity", liquidity_ratio * 15, 15, "pass" if liquidity_ratio >= 0.9 else "needs_work", f"acceptable_ratio={liquidity_ratio:.3f}"),
-        ("ranking_explainability", ranking_ratio * 20, 20, "pass" if ranking_ratio >= 0.8 else "needs_work", f"score_explainable_ratio={ranking_ratio:.3f}"),
+        ("abnormal_return", abnormal_ratio * 12, 12, "limited" if abnormal_ratio else "fail", "market adjusted only; sector/size absent"),
+        ("liquidity", liquidity_ratio * 12, 12, "pass" if liquidity_ratio >= 0.9 else "needs_work", f"acceptable_ratio={liquidity_ratio:.3f}"),
+        ("ranking_explainability", ranking_ratio * 18, 18, "pass" if ranking_ratio >= 0.8 else "needs_work", f"score_explainable_ratio={ranking_ratio:.3f}"),
         ("signal_bucket_quality", signal_good * 10, 10, "limited" if signal_good >= 0.5 else "unproven", f"directional_bucket_ratio={signal_good:.3f}"),
         ("critical_blockers", (1.0 - blocker_penalty) * 5, 5, "pass" if blocker_penalty == 0 else "blocked", f"blocker_penalty={blocker_penalty:.3f}"),
     ]
@@ -1038,16 +1069,30 @@ def _classification_summary(df: pd.DataFrame) -> dict[str, Any]:
     if df.empty:
         return {"rows": 0}
     total = len(df)
+    def col(name: str, default: object = "") -> pd.Series:
+        return df[name] if name in df else pd.Series([default] * total, index=df.index)
+
     adjusted_supported = (
-        df["classification_basis_level"].fillna("").isin(["sector_size_adjusted", "sector_adjusted", "size_adjusted"])
-        & df["event_confidence_tier"].fillna("").isin(["high", "medium"])
+        col("classification_basis_level").fillna("").isin(["sector_size_adjusted", "sector_adjusted", "size_adjusted"])
+        & col("event_confidence_tier").fillna("").isin(["high", "medium"])
     )
-    auto_safe = df["auto_classification_safe_flag"].map(_truthy) if "auto_classification_safe_flag" in df else pd.Series([False] * total)
-    high_conf_auto = df["event_confidence_tier"].fillna("").eq("high") & auto_safe
-    high_priority = df["manual_review_priority"].fillna("").eq("high")
-    universe_high = df["classification_basis_level"].fillna("").eq("universe_adjusted_only") & df["event_confidence_tier"].fillna("").eq("high")
+    auto_safe = col("auto_classification_safe_flag", False).map(_truthy)
+    high_conf_auto = col("event_confidence_tier").fillna("").eq("high") & auto_safe
+    high_priority = col("manual_review_priority").fillna("").eq("high")
+    universe_high = col("classification_basis_level").fillna("").eq("universe_adjusted_only") & col("event_confidence_tier").fillna("").eq("high")
+    fundamental_direction = col("fundamental_event_direction").fillna("")
+    fundamental_confidence = col("fundamental_event_confidence").fillna("")
+    fundamental_mixed = col("fundamental_mixed_signal_flag", False).map(_truthy)
+    insufficient_fundamental = fundamental_direction.eq("insufficient_evidence") | fundamental_confidence.eq("not_evaluable")
+    contradiction = col("classification_issue").fillna("").astype(str)
+    price_conflict = contradiction.str.contains("fundamental|mixed|conflict", case=False, regex=True) & col("mixed_event_severity").fillna("").isin(["medium", "high"])
+    final_direction = col("event_direction_final").fillna("")
+    confirmed = fundamental_direction.isin(["positive", "negative"]) & final_direction.eq(fundamental_direction) & adjusted_supported
     supported_ratio = float(adjusted_supported.sum() / total) if total else 0.0
     auto_ratio = float(auto_safe.sum() / total) if total else 0.0
+    fundamental_supported_ratio = float(fundamental_confidence.isin(["high", "medium"]).sum() / total) if total else 0.0
+    confirmation_ratio = float(confirmed.sum() / total) if total else 0.0
+    conflict_rows = int(price_conflict.sum())
     quality_score = round(
         max(
             0.0,
@@ -1055,7 +1100,7 @@ def _classification_summary(df: pd.DataFrame) -> dict[str, Any]:
                 100.0,
                 supported_ratio * 55.0
                 + auto_ratio * 25.0
-                + float(df["event_confidence_tier"].fillna("").isin(["high", "medium"]).sum() / total) * 20.0
+                + float(col("event_confidence_tier").fillna("").isin(["high", "medium"]).sum() / total) * 20.0
                 - float(high_priority.sum() / total) * 25.0
                 - float(universe_high.sum() / total) * 40.0,
             ),
@@ -1067,11 +1112,20 @@ def _classification_summary(df: pd.DataFrame) -> dict[str, Any]:
         "manual_review_required": int(df["manual_review_required"].astype(bool).sum()),
         "mixed_event_rows": int(df["mixed_event_flag"].astype(bool).sum()),
         "issue_counts": df["classification_issue"].replace("", "none").value_counts(dropna=False).to_dict(),
-        "classification_confidence_tier_counts": df["event_confidence_tier"].fillna("missing").value_counts(dropna=False).to_dict(),
-        "event_direction_final_counts": df["event_direction_final"].fillna("missing").value_counts(dropna=False).to_dict(),
-        "event_reaction_pattern_counts": df["event_reaction_pattern"].fillna("missing").value_counts(dropna=False).to_dict(),
-        "manual_review_category_counts": df["manual_review_category"].fillna("missing").value_counts(dropna=False).to_dict(),
-        "manual_review_priority_counts": df["manual_review_priority"].fillna("missing").value_counts(dropna=False).to_dict(),
+        "classification_confidence_tier_counts": col("event_confidence_tier").fillna("missing").value_counts(dropna=False).to_dict(),
+        "event_direction_final_counts": col("event_direction_final").fillna("missing").value_counts(dropna=False).to_dict(),
+        "event_reaction_pattern_counts": col("event_reaction_pattern").fillna("missing").value_counts(dropna=False).to_dict(),
+        "manual_review_category_counts": col("manual_review_category").fillna("missing").value_counts(dropna=False).to_dict(),
+        "manual_review_priority_counts": col("manual_review_priority").fillna("missing").value_counts(dropna=False).to_dict(),
+        "fundamental_event_type_counts": col("fundamental_event_type").fillna("missing").value_counts(dropna=False).to_dict(),
+        "fundamental_event_direction_counts": fundamental_direction.replace("", "missing").value_counts(dropna=False).to_dict(),
+        "fundamental_event_confidence_counts": fundamental_confidence.replace("", "missing").value_counts(dropna=False).to_dict(),
+        "fundamental_event_strength_counts": col("fundamental_event_strength").fillna("missing").value_counts(dropna=False).to_dict(),
+        "fundamental_mixed_signal_rows": int(fundamental_mixed.sum()),
+        "insufficient_fundamental_evidence_rows": int(insufficient_fundamental.sum()),
+        "fundamental_price_confirmation_ratio": confirmation_ratio,
+        "fundamental_price_conflict_rows": conflict_rows,
+        "fundamental_evidence_quality_score": round(max(0.0, min(100.0, fundamental_supported_ratio * 60.0 + confirmation_ratio * 30.0 - float(insufficient_fundamental.sum() / total) * 20.0 - float(conflict_rows / total) * 25.0)), 2),
         "auto_classification_safe_ratio": auto_ratio,
         "high_confidence_auto_classified_rows": int(high_conf_auto.sum()),
         "high_priority_manual_review_rows": int(high_priority.sum()),
@@ -1274,6 +1328,15 @@ def build_commercial_analysis_validity_audit(
         "event_reaction_pattern_counts": classification_quality.get("event_reaction_pattern_counts", {}),
         "manual_review_category_counts": classification_quality.get("manual_review_category_counts", {}),
         "manual_review_priority_counts": classification_quality.get("manual_review_priority_counts", {}),
+        "fundamental_event_type_counts": classification_quality.get("fundamental_event_type_counts", {}),
+        "fundamental_event_direction_counts": classification_quality.get("fundamental_event_direction_counts", {}),
+        "fundamental_event_confidence_counts": classification_quality.get("fundamental_event_confidence_counts", {}),
+        "fundamental_event_strength_counts": classification_quality.get("fundamental_event_strength_counts", {}),
+        "fundamental_mixed_signal_rows": classification_quality.get("fundamental_mixed_signal_rows", 0),
+        "insufficient_fundamental_evidence_rows": classification_quality.get("insufficient_fundamental_evidence_rows", 0),
+        "fundamental_price_confirmation_ratio": classification_quality.get("fundamental_price_confirmation_ratio", 0.0),
+        "fundamental_price_conflict_rows": classification_quality.get("fundamental_price_conflict_rows", 0),
+        "fundamental_evidence_quality_score": classification_quality.get("fundamental_evidence_quality_score", 0.0),
         "auto_classification_safe_ratio": classification_quality.get("auto_classification_safe_ratio", 0.0),
         "high_confidence_auto_classified_rows": classification_quality.get("high_confidence_auto_classified_rows", 0),
         "high_priority_manual_review_rows": classification_quality.get("high_priority_manual_review_rows", 0),

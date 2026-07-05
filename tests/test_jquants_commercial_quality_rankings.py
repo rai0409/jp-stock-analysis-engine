@@ -326,3 +326,68 @@ def test_mixed_reaction_horizons_create_contradiction_flags(tmp_path):
     assert row["event_reaction_pattern"] == "overreaction_or_reversal"
     assert "1d_5d_reaction_conflict" in row["contradiction_flags"]
     assert row["mixed_event_severity"] in {"medium", "high"}
+
+
+def test_fundamental_guidance_and_dividend_evidence_fields(tmp_path):
+    rows = [
+        _base_row("6001", "earnings_upward", 0.03),
+        _base_row("6002", "earnings_downward", -0.03),
+        _base_row("6003", "earnings_upward_and_dividend_decrease", 0.02),
+    ]
+    rows[0]["change_op_pct"] = 12.0
+    rows[1]["change_np_pct"] = -8.0
+    rows[2]["dividend_revision_direction"] = "decrease"
+    rows[2]["change_fdivann_pct"] = -15.0
+
+    paths = _run(tmp_path, rows)
+    pos = pd.read_csv(paths["positive_reacted"], dtype={"ticker": str})
+    neg = pd.read_csv(paths["negative_reacted"], dtype={"ticker": str})
+
+    up = pos[pos["ticker"] == "6001"].iloc[0]
+    assert up["fundamental_event_type"] == "guidance_revision"
+    assert up["fundamental_event_direction"] == "positive"
+    assert up["guidance_revision_direction"] == "positive"
+    assert up["fundamental_event_confidence"] in {"high", "medium"}
+    assert str(up["auto_classification_safe_flag"]).lower() in {"true", "1"}
+    assert "fundamental_event_direction" in json.loads(up["ranking_score_components"])
+    assert "fundamental_event=" in up["evidence_summary"]
+
+    down = neg[neg["ticker"] == "6002"].iloc[0]
+    assert down["fundamental_event_direction"] == "negative"
+    assert down["guidance_revision_direction"] == "negative"
+
+    mixed = pos[pos["ticker"] == "6003"].iloc[0]
+    assert str(mixed["fundamental_mixed_signal_flag"]).lower() in {"true", "1"}
+    assert "dividend_revision" in mixed["fundamental_mixed_signal_reason"]
+    assert mixed["dividend_revision_direction"] == "negative"
+
+
+def test_insufficient_fundamental_evidence_is_explicit(tmp_path):
+    row = _base_row("6004", "neutral_event", 0.0)
+    row["earnings_revision_direction"] = ""
+    row["dividend_revision_direction"] = ""
+    row["change_sales_pct"] = None
+    row["change_op_pct"] = None
+    row["change_np_pct"] = None
+    row["change_eps_pct"] = None
+    paths = _run(tmp_path, [row])
+
+    unclassified = pd.read_csv(paths["unclassified"], dtype={"ticker": str})
+    evidence = unclassified.iloc[0]
+    assert evidence["fundamental_event_direction"] == "insufficient_evidence"
+    assert evidence["fundamental_event_confidence"] == "not_evaluable"
+    assert "insufficient_fundamental_evidence" in evidence["fundamental_event_flags"]
+
+
+def test_fundamental_price_conflict_requires_review(tmp_path):
+    rows = [_base_row("6005", "earnings_upward", -0.03)]
+    rows[0]["change_op_pct"] = 15.0
+    rows[0]["sector_size_adjusted_return_1d"] = -0.03
+    rows[0]["sector_size_adjusted_return_3d"] = -0.02
+    rows[0]["sector_size_adjusted_return_5d"] = -0.02
+    paths = _run(tmp_path, rows)
+
+    row = pd.read_csv(paths["positive_unreacted"], dtype={"ticker": str}).iloc[0]
+    assert "fundamental_price_reaction_conflict" in row["contradiction_flags"]
+    assert str(row["manual_review_required"]).lower() in {"true", "1"}
+    assert "fundamental_price_reaction_conflict" in row["manual_review_reason"]
