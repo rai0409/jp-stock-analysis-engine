@@ -74,6 +74,18 @@ CLASSIFICATION_COLUMNS = [
     "classification_basis_level",
     "classification_evidence_count",
     "classification_limitation_count",
+    "financial_disclosure_available",
+    "financial_disclosure_join_status",
+    "financial_disclosure_match_count",
+    "financial_disclosure_doc_types",
+    "financial_statement_event_flag",
+    "earnings_forecast_revision_event_flag",
+    "dividend_forecast_revision_event_flag",
+    "financial_disclosure_confidence",
+    "financial_disclosure_limitations",
+    "earnings_forecast_revision_direction_v2",
+    "dividend_revision_direction_v2",
+    "financial_statement_direction",
     "fundamental_event_type",
     "fundamental_event_direction",
     "fundamental_event_strength",
@@ -530,6 +542,18 @@ def validate_event_classification(
                 "classification_basis_level": basis,
                 "classification_evidence_count": row.get("classification_evidence_count"),
                 "classification_limitation_count": row.get("classification_limitation_count"),
+                "financial_disclosure_available": _truthy(row.get("financial_disclosure_available")),
+                "financial_disclosure_join_status": row.get("financial_disclosure_join_status"),
+                "financial_disclosure_match_count": row.get("financial_disclosure_match_count"),
+                "financial_disclosure_doc_types": row.get("financial_disclosure_doc_types"),
+                "financial_statement_event_flag": _truthy(row.get("financial_statement_event_flag")),
+                "earnings_forecast_revision_event_flag": _truthy(row.get("earnings_forecast_revision_event_flag")),
+                "dividend_forecast_revision_event_flag": _truthy(row.get("dividend_forecast_revision_event_flag")),
+                "financial_disclosure_confidence": row.get("financial_disclosure_confidence"),
+                "financial_disclosure_limitations": row.get("financial_disclosure_limitations"),
+                "earnings_forecast_revision_direction_v2": row.get("earnings_forecast_revision_direction_v2"),
+                "dividend_revision_direction_v2": row.get("dividend_revision_direction_v2"),
+                "financial_statement_direction": row.get("financial_statement_direction"),
                 "fundamental_event_type": row.get("fundamental_event_type"),
                 "fundamental_event_direction": fundamental_direction,
                 "fundamental_event_strength": row.get("fundamental_event_strength"),
@@ -1088,6 +1112,18 @@ def _classification_summary(df: pd.DataFrame) -> dict[str, Any]:
     price_conflict = contradiction.str.contains("fundamental|mixed|conflict", case=False, regex=True) & col("mixed_event_severity").fillna("").isin(["medium", "high"])
     final_direction = col("event_direction_final").fillna("")
     confirmed = fundamental_direction.isin(["positive", "negative"]) & final_direction.eq(fundamental_direction) & adjusted_supported
+    fd_available = col("financial_disclosure_available", False).map(_truthy)
+    fd_join_status = col("financial_disclosure_join_status").fillna("")
+    fd_joined = fd_join_status.isin(["matched_discno", "matched_doctype", "matched_date"])
+    fd_match_count = pd.to_numeric(col("financial_disclosure_match_count", 0), errors="coerce").fillna(0).astype(int)
+    fd_earn_direction = col("earnings_forecast_revision_direction_v2").fillna("")
+    fd_div_direction = col("dividend_revision_direction_v2").fillna("")
+    fd_statement_direction = col("financial_statement_direction").fillna("")
+    fd_supported_direction = fd_earn_direction.where(fd_earn_direction.isin(["positive", "negative", "mixed"]), fd_div_direction)
+    fd_supported = fd_joined & fd_supported_direction.isin(["positive", "negative"])
+    fd_confirmed = fd_supported & final_direction.eq(fd_supported_direction) & adjusted_supported
+    fd_conflict = fd_supported & final_direction.isin(["positive", "negative"]) & final_direction.ne(fd_supported_direction)
+    insufficient_fd = fd_joined & ~fd_supported_direction.isin(["positive", "negative", "mixed"]) & fd_statement_direction.ne("context_only")
     supported_ratio = float(adjusted_supported.sum() / total) if total else 0.0
     auto_ratio = float(auto_safe.sum() / total) if total else 0.0
     fundamental_supported_ratio = float(fundamental_confidence.isin(["high", "medium"]).sum() / total) if total else 0.0
@@ -1126,6 +1162,20 @@ def _classification_summary(df: pd.DataFrame) -> dict[str, Any]:
         "fundamental_price_confirmation_ratio": confirmation_ratio,
         "fundamental_price_conflict_rows": conflict_rows,
         "fundamental_evidence_quality_score": round(max(0.0, min(100.0, fundamental_supported_ratio * 60.0 + confirmation_ratio * 30.0 - float(insufficient_fundamental.sum() / total) * 20.0 - float(conflict_rows / total) * 25.0)), 2),
+        "financial_disclosure_available_ratio": float(fd_available.sum() / total) if total else 0.0,
+        "financial_disclosure_joined_rows": int(fd_joined.sum()),
+        "financial_disclosure_unmatched_rows": int((fd_available & ~fd_joined).sum()),
+        "financial_disclosure_match_count_distribution": fd_match_count.value_counts(dropna=False).sort_index().to_dict(),
+        "financial_statement_event_rows": int(col("financial_statement_event_flag", False).map(_truthy).sum()),
+        "earnings_forecast_revision_event_rows": int(col("earnings_forecast_revision_event_flag", False).map(_truthy).sum()),
+        "dividend_forecast_revision_event_rows": int(col("dividend_forecast_revision_event_flag", False).map(_truthy).sum()),
+        "earnings_forecast_revision_direction_v2_counts": fd_earn_direction.replace("", "missing").value_counts(dropna=False).to_dict(),
+        "dividend_revision_direction_v2_counts": fd_div_direction.replace("", "missing").value_counts(dropna=False).to_dict(),
+        "financial_statement_direction_counts": fd_statement_direction.replace("", "missing").value_counts(dropna=False).to_dict(),
+        "financial_disclosure_supported_classification_ratio": float(fd_supported.sum() / total) if total else 0.0,
+        "insufficient_financial_disclosure_evidence_rows": int(insufficient_fd.sum()),
+        "financial_disclosure_price_confirmation_ratio": float(fd_confirmed.sum() / total) if total else 0.0,
+        "financial_disclosure_price_conflict_rows": int(fd_conflict.sum()),
         "auto_classification_safe_ratio": auto_ratio,
         "high_confidence_auto_classified_rows": int(high_conf_auto.sum()),
         "high_priority_manual_review_rows": int(high_priority.sum()),
@@ -1337,6 +1387,20 @@ def build_commercial_analysis_validity_audit(
         "fundamental_price_confirmation_ratio": classification_quality.get("fundamental_price_confirmation_ratio", 0.0),
         "fundamental_price_conflict_rows": classification_quality.get("fundamental_price_conflict_rows", 0),
         "fundamental_evidence_quality_score": classification_quality.get("fundamental_evidence_quality_score", 0.0),
+        "financial_disclosure_available_ratio": classification_quality.get("financial_disclosure_available_ratio", 0.0),
+        "financial_disclosure_joined_rows": classification_quality.get("financial_disclosure_joined_rows", 0),
+        "financial_disclosure_unmatched_rows": classification_quality.get("financial_disclosure_unmatched_rows", 0),
+        "financial_disclosure_match_count_distribution": classification_quality.get("financial_disclosure_match_count_distribution", {}),
+        "financial_statement_event_rows": classification_quality.get("financial_statement_event_rows", 0),
+        "earnings_forecast_revision_event_rows": classification_quality.get("earnings_forecast_revision_event_rows", 0),
+        "dividend_forecast_revision_event_rows": classification_quality.get("dividend_forecast_revision_event_rows", 0),
+        "earnings_forecast_revision_direction_v2_counts": classification_quality.get("earnings_forecast_revision_direction_v2_counts", {}),
+        "dividend_revision_direction_v2_counts": classification_quality.get("dividend_revision_direction_v2_counts", {}),
+        "financial_statement_direction_counts": classification_quality.get("financial_statement_direction_counts", {}),
+        "financial_disclosure_supported_classification_ratio": classification_quality.get("financial_disclosure_supported_classification_ratio", 0.0),
+        "insufficient_financial_disclosure_evidence_rows": classification_quality.get("insufficient_financial_disclosure_evidence_rows", 0),
+        "financial_disclosure_price_confirmation_ratio": classification_quality.get("financial_disclosure_price_confirmation_ratio", 0.0),
+        "financial_disclosure_price_conflict_rows": classification_quality.get("financial_disclosure_price_conflict_rows", 0),
         "auto_classification_safe_ratio": classification_quality.get("auto_classification_safe_ratio", 0.0),
         "high_confidence_auto_classified_rows": classification_quality.get("high_confidence_auto_classified_rows", 0),
         "high_priority_manual_review_rows": classification_quality.get("high_priority_manual_review_rows", 0),

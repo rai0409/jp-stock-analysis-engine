@@ -6,6 +6,7 @@ import pandas as pd
 
 from jp_stock_analysis.analysis.jquants_commercial_quality_rankings import (
     build_commercial_quality_rankings,
+    load_financial_disclosure_events,
 )
 
 
@@ -75,7 +76,7 @@ def _base_row(ticker: str, signal: str, abnormal: float) -> dict[str, object]:
     }
 
 
-def _run(tmp_path, rows):
+def _run(tmp_path, rows, events_path=None):
     input_path = tmp_path / "liquidity.csv"
     out_paths = {
         "positive_reacted": tmp_path / "positive_reacted.csv",
@@ -96,8 +97,14 @@ def _run(tmp_path, rows):
         out_paths["audit"],
         out_paths["unclassified"],
         out_paths["summary"],
+        events_path or tmp_path / "missing_financial_disclosure_events.csv",
     )
     return out_paths
+
+
+def _write_events(path, rows):
+    pd.DataFrame(rows).to_csv(path, index=False)
+    return path
 
 
 def test_commercial_quality_rankings_classify_rank_and_audit_exclusions(tmp_path):
@@ -391,3 +398,145 @@ def test_fundamental_price_conflict_requires_review(tmp_path):
     assert "fundamental_price_reaction_conflict" in row["contradiction_flags"]
     assert str(row["manual_review_required"]).lower() in {"true", "1"}
     assert "fundamental_price_reaction_conflict" in row["manual_review_reason"]
+
+
+def test_financial_disclosure_loader_missing_file_is_safe(tmp_path):
+    assert load_financial_disclosure_events(tmp_path / "missing.csv").empty
+
+
+def test_financial_disclosure_join_by_discno_and_direction(tmp_path):
+    row = _base_row("7001", "earnings_upward", 0.03)
+    row["discnos"] = "DISC1"
+    events = _write_events(
+        tmp_path / "events.csv",
+        [
+            {
+                "ticker": "7001",
+                "DiscDate": "2024-12-01",
+                "DiscNo": "DISC1",
+                "DocType": "EarnForecastRevision",
+                "is_financial_statement": False,
+                "is_earnings_forecast_revision": True,
+                "is_dividend_forecast_revision": False,
+                "change_op_pct": 12.0,
+            }
+        ],
+    )
+    paths = _run(tmp_path, [row], events)
+    out = pd.read_csv(paths["positive_reacted"], dtype={"ticker": str}).iloc[0]
+    assert out["financial_disclosure_join_status"] == "matched_discno"
+    assert int(out["financial_disclosure_match_count"]) == 1
+    assert out["earnings_forecast_revision_direction_v2"] == "positive"
+    assert out["earnings_forecast_revision_strength_v2"] == "strong"
+    assert "financial_disclosure" in out["fundamental_event_components"]
+    assert str(out["auto_classification_safe_flag"]).lower() in {"true", "1"}
+
+
+def test_financial_disclosure_join_by_doctype_and_downward_revision(tmp_path):
+    row = _base_row("7002", "earnings_downward", -0.03)
+    row["discnos"] = "NO_MATCH"
+    row["doctypes"] = "EarnForecastRevision"
+    events = _write_events(
+        tmp_path / "events.csv",
+        [
+            {
+                "ticker": "7002",
+                "DiscDate": "2024-12-01",
+                "DiscNo": "DISC2",
+                "DocType": "EarnForecastRevision",
+                "is_financial_statement": False,
+                "is_earnings_forecast_revision": True,
+                "is_dividend_forecast_revision": False,
+                "change_np_pct": -7.0,
+            }
+        ],
+    )
+    paths = _run(tmp_path, [row], events)
+    out = pd.read_csv(paths["negative_reacted"], dtype={"ticker": str}).iloc[0]
+    assert out["financial_disclosure_join_status"] == "matched_doctype"
+    assert out["earnings_forecast_revision_direction_v2"] == "negative"
+    assert out["financial_disclosure_confidence"] == "medium"
+
+
+def test_financial_disclosure_multiple_date_matches_aggregate(tmp_path):
+    row = _base_row("7003", "earnings_upward", 0.02)
+    row["discnos"] = "NO_MATCH"
+    row["doctypes"] = "NO_MATCH"
+    events = _write_events(
+        tmp_path / "events.csv",
+        [
+            {
+                "ticker": "7003",
+                "DiscDate": "2024-12-01",
+                "DiscNo": "A",
+                "DocType": "EarnForecastRevision",
+                "is_financial_statement": False,
+                "is_earnings_forecast_revision": True,
+                "is_dividend_forecast_revision": False,
+                "change_op_pct": 4.0,
+            },
+            {
+                "ticker": "7003",
+                "DiscDate": "2024-12-01",
+                "DiscNo": "B",
+                "DocType": "DividendForecastRevision",
+                "is_financial_statement": False,
+                "is_earnings_forecast_revision": False,
+                "is_dividend_forecast_revision": True,
+                "change_fdivann_pct": 10.0,
+            },
+        ],
+    )
+    paths = _run(tmp_path, [row], events)
+    out = pd.read_csv(paths["positive_reacted"], dtype={"ticker": str}).iloc[0]
+    assert out["financial_disclosure_join_status"] == "matched_date"
+    assert int(out["financial_disclosure_match_count"]) == 2
+    assert "multiple_financial_disclosure_matches" in out["financial_disclosure_limitations"]
+    assert out["dividend_revision_direction_v2"] == "positive"
+
+
+def test_financial_disclosure_mixed_earnings_and_dividend_and_statement_context(tmp_path):
+    rows = [
+        _base_row("7004", "earnings_upward", 0.02),
+        _base_row("7005", "neutral_event", 0.0),
+    ]
+    rows[0]["discnos"] = "MIX"
+    rows[1]["discnos"] = "FS"
+    rows[1]["earnings_revision_direction"] = ""
+    events = _write_events(
+        tmp_path / "events.csv",
+        [
+            {
+                "ticker": "7004",
+                "DiscDate": "2024-12-01",
+                "DiscNo": "MIX",
+                "DocType": "EarnForecastRevision",
+                "is_financial_statement": False,
+                "is_earnings_forecast_revision": True,
+                "is_dividend_forecast_revision": False,
+                "change_sales_pct": 6.0,
+                "change_op_pct": -5.0,
+            },
+            {
+                "ticker": "7005",
+                "DiscDate": "2024-12-01",
+                "DiscNo": "FS",
+                "DocType": "FYFinancialStatements_Consolidated_JP",
+                "is_financial_statement": True,
+                "is_earnings_forecast_revision": False,
+                "is_dividend_forecast_revision": False,
+                "Sales_num": 1000,
+                "OP_num": 100,
+            },
+        ],
+    )
+    paths = _run(tmp_path, rows, events)
+    mixed = pd.read_csv(paths["positive_reacted"], dtype={"ticker": str}).iloc[0]
+    assert mixed["earnings_forecast_revision_direction_v2"] == "mixed"
+    assert str(mixed["fundamental_mixed_signal_flag"]).lower() in {"true", "1"}
+
+    unclassified = pd.read_csv(paths["unclassified"], dtype={"ticker": str})
+    statement = unclassified[unclassified["ticker"] == "7005"].iloc[0]
+    assert statement["financial_statement_direction"] == "context_only"
+    assert statement["fundamental_event_direction"] == "insufficient_evidence"
+    assert statement["event_confidence_tier"] != "high"

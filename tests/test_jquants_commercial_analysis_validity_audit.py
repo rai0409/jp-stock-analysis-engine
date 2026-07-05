@@ -83,6 +83,18 @@ def _write_minimal_inputs(base):
         "fundamental_mixed_signal_flag": False,
         "fundamental_mixed_signal_reason": "",
         "fundamental_event_flags": "none",
+        "financial_disclosure_available": True,
+        "financial_disclosure_join_status": "matched_discno",
+        "financial_disclosure_match_count": 1,
+        "financial_disclosure_doc_types": "EarnForecastRevision",
+        "financial_statement_event_flag": False,
+        "earnings_forecast_revision_event_flag": True,
+        "dividend_forecast_revision_event_flag": False,
+        "financial_disclosure_confidence": "medium",
+        "financial_disclosure_limitations": "none",
+        "earnings_forecast_revision_direction_v2": "positive",
+        "dividend_revision_direction_v2": "insufficient_evidence",
+        "financial_statement_direction": "insufficient_evidence",
     }
     pd.DataFrame([ranking_row]).to_csv(
         analysis / "commercial_quality_positive_reacted_ranking_enriched.csv", index=False
@@ -296,6 +308,14 @@ def test_classification_quality_v2_report_metrics(tmp_path):
     assert report["fundamental_price_confirmation_ratio"] == 1.0
     assert report["fundamental_price_conflict_rows"] == 0
     assert report["fundamental_evidence_quality_score"] > 0
+    assert report["financial_disclosure_available_ratio"] == 1.0
+    assert report["financial_disclosure_joined_rows"] == 1
+    assert report["financial_disclosure_unmatched_rows"] == 0
+    assert report["earnings_forecast_revision_direction_v2_counts"]["positive"] == 1
+    assert report["dividend_revision_direction_v2_counts"]["insufficient_evidence"] == 1
+    assert report["financial_disclosure_supported_classification_ratio"] == 1.0
+    assert report["financial_disclosure_price_confirmation_ratio"] == 1.0
+    assert report["financial_disclosure_price_conflict_rows"] == 0
 
 
 def test_universe_only_high_confidence_is_critical_issue():

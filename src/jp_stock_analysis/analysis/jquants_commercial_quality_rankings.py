@@ -33,6 +33,7 @@ DEFAULT_UNCLASSIFIED_AUDIT = (
     ANALYSIS_DIR / "commercial_quality_rankings_unclassified_audit.csv"
 )
 DEFAULT_SUMMARY = ANALYSIS_DIR / "commercial_quality_rankings_summary.json"
+DEFAULT_FINANCIAL_DISCLOSURE_EVENTS = ANALYSIS_DIR / "financial_disclosure_events_full.csv"
 
 ELIGIBLE_PRICE_STATUSES = {
     "full_20d_available",
@@ -51,6 +52,27 @@ EVIDENCE_COLUMNS = [
     "classification_basis_level",
     "classification_evidence_count",
     "classification_limitation_count",
+    "financial_disclosure_available",
+    "financial_disclosure_join_status",
+    "financial_disclosure_match_count",
+    "financial_disclosure_doc_types",
+    "financial_disclosure_discnos",
+    "financial_statement_event_flag",
+    "earnings_forecast_revision_event_flag",
+    "dividend_forecast_revision_event_flag",
+    "financial_disclosure_event_flags",
+    "financial_disclosure_event_summary",
+    "financial_disclosure_confidence",
+    "financial_disclosure_limitations",
+    "earnings_forecast_revision_direction_v2",
+    "earnings_forecast_revision_strength_v2",
+    "earnings_forecast_revision_components",
+    "dividend_revision_direction_v2",
+    "dividend_revision_strength_v2",
+    "dividend_revision_components",
+    "financial_statement_direction",
+    "financial_statement_strength",
+    "financial_statement_components",
     "fundamental_event_type",
     "fundamental_event_direction",
     "fundamental_event_strength",
@@ -298,6 +320,208 @@ def _as_float(value: object) -> float | None:
     return None if pd.isna(parsed) else float(parsed)
 
 
+def _safe_text(value: object) -> str:
+    if isinstance(value, pd.Series):
+        value = value.dropna().iloc[-1] if not value.dropna().empty else ""
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip()
+
+
+def _normalize_ticker(value: object) -> str:
+    text = _safe_text(value)
+    if text.endswith(".0"):
+        text = text[:-2]
+    if len(text) == 5 and text.endswith("0") and text[:4].isdigit():
+        text = text[:4]
+    return text.zfill(4) if text.isdigit() and len(text) < 4 else text
+
+
+def _normalize_date(value: object) -> str:
+    parsed = pd.to_datetime(pd.Series([value]), errors="coerce").iloc[0]
+    return "" if pd.isna(parsed) else parsed.strftime("%Y-%m-%d")
+
+
+def load_financial_disclosure_events(path: Path = DEFAULT_FINANCIAL_DISCLOSURE_EVENTS) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(path, dtype={"ticker": str, "Code": str, "DiscNo": str, "DocType": str})
+    if df.empty:
+        return df
+    out = df.copy()
+    out["_fd_ticker"] = out.get("ticker", out.get("Code", "")).map(_normalize_ticker)
+    out["_fd_disc_date"] = out.get("DiscDate", "").map(_normalize_date)
+    out["_fd_discno"] = out.get("DiscNo", "").fillna("").astype(str)
+    out["_fd_doctype"] = out.get("DocType", "").fillna("").astype(str)
+    return out
+
+
+def _split_pipe_values(value: object) -> list[str]:
+    text = _safe_text(value)
+    if not text:
+        return []
+    return [part.strip() for part in text.replace(",", "|").split("|") if part.strip()]
+
+
+def _event_direction_from_values(values: list[float]) -> tuple[str, str]:
+    nonzero = [v for v in values if v != 0]
+    if not nonzero:
+        return "insufficient_evidence", "not_evaluable"
+    positives = [v for v in nonzero if v > 0]
+    negatives = [v for v in nonzero if v < 0]
+    strengths = [_strength_from_pct(v) for v in nonzero]
+    if positives and negatives:
+        return "mixed", _combine_strength(strengths)
+    return ("positive" if positives else "negative"), _combine_strength(strengths)
+
+
+def _aggregate_financial_disclosure_matches(matches: pd.DataFrame, status: str, available: bool) -> dict[str, Any]:
+    if matches.empty:
+        limitations = "financial_disclosure_file_unavailable" if not available else "financial_disclosure_unmatched"
+        return {
+            "financial_disclosure_available": bool(available),
+            "financial_disclosure_join_status": "unavailable" if not available else "unmatched",
+            "financial_disclosure_match_count": 0,
+            "financial_disclosure_doc_types": "",
+            "financial_disclosure_discnos": "",
+            "financial_statement_event_flag": False,
+            "earnings_forecast_revision_event_flag": False,
+            "dividend_forecast_revision_event_flag": False,
+            "financial_disclosure_event_flags": "none",
+            "financial_disclosure_event_summary": "financial_disclosure=unavailable" if not available else "financial_disclosure=unmatched",
+            "financial_disclosure_confidence": "not_evaluable",
+            "financial_disclosure_limitations": limitations,
+            "earnings_forecast_revision_direction_v2": "insufficient_evidence",
+            "earnings_forecast_revision_strength_v2": "not_evaluable",
+            "earnings_forecast_revision_components": "{}",
+            "dividend_revision_direction_v2": "insufficient_evidence",
+            "dividend_revision_strength_v2": "not_evaluable",
+            "dividend_revision_components": "{}",
+            "financial_statement_direction": "insufficient_evidence",
+            "financial_statement_strength": "not_evaluable",
+            "financial_statement_components": "{}",
+        }
+
+    doc_types = sorted({_safe_text(v) for v in matches.get("DocType", pd.Series(dtype=object)) if _safe_text(v)})
+    discnos = sorted({_safe_text(v) for v in matches.get("DiscNo", pd.Series(dtype=object)) if _safe_text(v)})
+    fs_flag = bool(matches.get("is_financial_statement", pd.Series(False, index=matches.index)).map(_truthy).any())
+    earn_flag = bool(matches.get("is_earnings_forecast_revision", pd.Series(False, index=matches.index)).map(_truthy).any())
+    div_flag = bool(matches.get("is_dividend_forecast_revision", pd.Series(False, index=matches.index)).map(_truthy).any())
+
+    flags = []
+    if fs_flag:
+        flags.append("financial_statement")
+    if earn_flag:
+        flags.append("earnings_forecast_revision")
+    if div_flag:
+        flags.append("dividend_forecast_revision")
+    limitations: list[str] = []
+    if len(matches) > 1:
+        limitations.append("multiple_financial_disclosure_matches")
+
+    # Direction only uses local comparison/change fields when available. Raw actual
+    # financial statement values are context, not directional evidence by themselves.
+    earn_values = []
+    for col in ["change_sales_pct", "change_op_pct", "change_np_pct", "change_eps_pct"]:
+        if col in matches:
+            earn_values.extend([v for v in pd.to_numeric(matches[col], errors="coerce").dropna().tolist()])
+    earn_direction, earn_strength = _event_direction_from_values(earn_values)
+    if earn_flag and not earn_values:
+        limitations.append("earnings_revision_comparison_unavailable")
+
+    div_values = []
+    for col in ["change_fdivann_pct"]:
+        if col in matches:
+            div_values.extend([v for v in pd.to_numeric(matches[col], errors="coerce").dropna().tolist()])
+    if not div_values and {"DivAnn_num", "FDivAnn_num"}.issubset(matches.columns):
+        for _, row in matches.iterrows():
+            current = _as_float(row.get("FDivAnn_num"))
+            prior = _as_float(row.get("DivAnn_num"))
+            if current is not None and prior is not None and abs(prior) > 1e-12:
+                div_values.append(((current - prior) / abs(prior)) * 100.0)
+    div_direction, div_strength = _event_direction_from_values(div_values)
+    if div_flag and not div_values:
+        limitations.append("dividend_revision_comparison_unavailable")
+
+    fs_components = {
+        "context_columns": [col for col in ["Sales_num", "OP_num", "NP_num", "EPS_num", "FSales_num", "FOP_num", "FNP_num", "FEPS_num"] if col in matches.columns],
+        "direction_basis": "context_only" if fs_flag else "not_applicable",
+    }
+    fs_direction = "context_only" if fs_flag else "insufficient_evidence"
+    fs_strength = "not_evaluable"
+    if fs_flag:
+        limitations.append("financial_statement_context_only")
+
+    supported_direction = any(direction in {"positive", "negative", "mixed"} for direction in [earn_direction, div_direction])
+    confidence = "medium" if supported_direction else "low" if fs_flag else "not_evaluable"
+    summary = (
+        f"financial_disclosure={status}; types={_pipe(flags)}; "
+        f"earnings_revision={earn_direction}; dividend_revision={div_direction}; financial_statement={fs_direction}"
+    )
+    return {
+        "financial_disclosure_available": True,
+        "financial_disclosure_join_status": status,
+        "financial_disclosure_match_count": int(len(matches)),
+        "financial_disclosure_doc_types": _pipe(doc_types),
+        "financial_disclosure_discnos": _pipe(discnos),
+        "financial_statement_event_flag": fs_flag,
+        "earnings_forecast_revision_event_flag": earn_flag,
+        "dividend_forecast_revision_event_flag": div_flag,
+        "financial_disclosure_event_flags": _pipe(flags),
+        "financial_disclosure_event_summary": summary,
+        "financial_disclosure_confidence": confidence,
+        "financial_disclosure_limitations": _pipe(limitations),
+        "earnings_forecast_revision_direction_v2": earn_direction,
+        "earnings_forecast_revision_strength_v2": earn_strength,
+        "earnings_forecast_revision_components": _stable_json({"values": earn_values, "source": "financial_disclosure_events"}),
+        "dividend_revision_direction_v2": div_direction,
+        "dividend_revision_strength_v2": div_strength,
+        "dividend_revision_components": _stable_json({"values": div_values, "source": "financial_disclosure_events"}),
+        "financial_statement_direction": fs_direction,
+        "financial_statement_strength": fs_strength,
+        "financial_statement_components": _stable_json(fs_components),
+    }
+
+
+def _attach_financial_disclosure_events(df: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    available = not events.empty
+    rows: list[dict[str, Any]] = []
+    for _, row in out.iterrows():
+        ticker = _normalize_ticker(row.get("ticker"))
+        disc_date = _normalize_date(row.get("DiscDate"))
+        base = events[(events["_fd_ticker"] == ticker) & (events["_fd_disc_date"] == disc_date)] if available else pd.DataFrame()
+        matches = pd.DataFrame()
+        status = "unmatched"
+        if not base.empty:
+            discnos = set(_split_pipe_values(row.get("discnos") or row.get("DiscNo")))
+            if discnos:
+                matches = base[base["_fd_discno"].isin(discnos)]
+                if not matches.empty:
+                    status = "matched_discno"
+            if matches.empty:
+                doctypes = set(_split_pipe_values(row.get("doctypes") or row.get("DocType")))
+                if doctypes:
+                    matches = base[base["_fd_doctype"].isin(doctypes)]
+                    if not matches.empty:
+                        status = "matched_doctype"
+            if matches.empty:
+                matches = base
+                status = "matched_date"
+        if not matches.empty and {"_fd_discno", "_fd_doctype"}.issubset(matches.columns):
+            matches = matches.sort_values(["_fd_discno", "_fd_doctype"])
+        rows.append(_aggregate_financial_disclosure_matches(matches, status, available))
+    evidence = pd.DataFrame(rows, index=out.index)
+    for col in evidence.columns:
+        out[col] = evidence[col]
+    return out
+
+
 def _sign(value: float | None, threshold: float = 0.0) -> int:
     if value is None:
         return 0
@@ -394,12 +618,25 @@ def _fundamental_event_evidence(row: pd.Series) -> dict[str, Any]:
     flags: list[str] = []
     components: dict[str, Any] = {}
 
+    fd_available = _truthy(row.get("financial_disclosure_available"))
+    fd_join_status = _safe_text(row.get("financial_disclosure_join_status"))
+    fd_confidence = _safe_text(row.get("financial_disclosure_confidence"))
+    fd_limitations = _safe_text(row.get("financial_disclosure_limitations"))
+    fd_earn_direction = _safe_text(row.get("earnings_forecast_revision_direction_v2"))
+    fd_earn_strength = _safe_text(row.get("earnings_forecast_revision_strength_v2"))
+    fd_div_direction = _safe_text(row.get("dividend_revision_direction_v2"))
+    fd_div_strength = _safe_text(row.get("dividend_revision_strength_v2"))
+
     guidance_dir_text = _direction_from_text(row.get("earnings_revision_direction"))
     guidance_num_dir, guidance_num_strength, guidance_num_cols = _component_from_numeric_changes(
         row,
         ["change_sales_pct", "change_op_pct", "change_np_pct", "change_eps_pct"],
     )
-    if guidance_dir_text in {"positive", "negative", "mixed"}:
+    if fd_earn_direction in {"positive", "negative", "mixed"}:
+        guidance_direction = fd_earn_direction
+        guidance_strength = fd_earn_strength if fd_earn_strength else "moderate"
+        guidance_cols = ["financial_disclosure_events", *guidance_num_cols]
+    elif guidance_dir_text in {"positive", "negative", "mixed"}:
         guidance_direction = guidance_dir_text
         guidance_strength = guidance_num_strength if guidance_num_strength != "not_evaluable" else "moderate"
         guidance_cols = ["earnings_revision_direction", *guidance_num_cols]
@@ -417,7 +654,11 @@ def _fundamental_event_evidence(row: pd.Series) -> dict[str, Any]:
         ["FDivAnn", "FDivFY", "NxFDivAnn"],
         ["DivAnn", "DivFY"],
     )
-    if dividend_dir_text in {"positive", "negative", "mixed"}:
+    if fd_div_direction in {"positive", "negative", "mixed"}:
+        dividend_direction = fd_div_direction
+        dividend_strength = fd_div_strength if fd_div_strength else "moderate"
+        dividend_cols = ["financial_disclosure_events", *dividend_num_cols, *dividend_diff_cols]
+    elif dividend_dir_text in {"positive", "negative", "mixed"}:
         dividend_direction = dividend_dir_text
         dividend_strength = _combine_strength([dividend_num_strength, dividend_diff_strength, "moderate"])
         dividend_cols = ["dividend_revision_direction", *dividend_num_cols, *dividend_diff_cols]
@@ -512,22 +753,61 @@ def _fundamental_event_evidence(row: pd.Series) -> dict[str, Any]:
         flags.append("one_off_factor_present")
         if confidence == "high":
             confidence = "medium"
+    if not fd_available:
+        flags.append("financial_disclosure_unavailable")
+    elif fd_join_status in {"unmatched", "unavailable"}:
+        flags.append("financial_disclosure_unmatched")
+    if fd_limitations and fd_limitations != "none":
+        flags.append(f"financial_disclosure_limitations:{fd_limitations}")
+    if fd_confidence in {"medium", "high"} and confidence == "low":
+        confidence = "medium"
 
     components.update(
         {
             "guidance_columns": guidance_cols,
             "dividend_columns": dividend_cols,
             "earnings_surprise_columns": earnings_cols,
+            "financial_disclosure": {
+                "join_status": fd_join_status,
+                "confidence": fd_confidence,
+                "earnings_direction_v2": fd_earn_direction,
+                "dividend_direction_v2": fd_div_direction,
+            },
             "component_directions": component_dirs,
             "component_strengths": component_strengths,
         }
     )
     component_text = _stable_json(components)
+    earnings_v2_direction = fd_earn_direction if fd_earn_direction in {"positive", "negative", "mixed"} else guidance_direction if guidance_direction in {"positive", "negative", "mixed"} else "insufficient_evidence"
+    earnings_v2_strength = fd_earn_strength if fd_earn_direction in {"positive", "negative", "mixed"} else guidance_strength if guidance_direction in {"positive", "negative", "mixed"} else "not_evaluable"
+    dividend_v2_direction = fd_div_direction if fd_div_direction in {"positive", "negative", "mixed"} else dividend_direction if dividend_direction in {"positive", "negative", "mixed"} else "insufficient_evidence"
+    dividend_v2_strength = fd_div_strength if fd_div_direction in {"positive", "negative", "mixed"} else dividend_strength if dividend_direction in {"positive", "negative", "mixed"} else "not_evaluable"
     summary = (
         f"fundamental_event={event_type}; fundamental_direction={fundamental_direction}; "
         f"fundamental_confidence={confidence}; components={_pipe(list(usable.keys()))}"
     )
     return {
+        "financial_disclosure_available": fd_available,
+        "financial_disclosure_join_status": fd_join_status or "unavailable",
+        "financial_disclosure_match_count": int(_as_float(row.get("financial_disclosure_match_count")) or 0),
+        "financial_disclosure_doc_types": _safe_text(row.get("financial_disclosure_doc_types")),
+        "financial_disclosure_discnos": _safe_text(row.get("financial_disclosure_discnos")),
+        "financial_statement_event_flag": _truthy(row.get("financial_statement_event_flag")),
+        "earnings_forecast_revision_event_flag": _truthy(row.get("earnings_forecast_revision_event_flag")),
+        "dividend_forecast_revision_event_flag": _truthy(row.get("dividend_forecast_revision_event_flag")),
+        "financial_disclosure_event_flags": _safe_text(row.get("financial_disclosure_event_flags")) or "none",
+        "financial_disclosure_event_summary": _safe_text(row.get("financial_disclosure_event_summary")),
+        "financial_disclosure_confidence": fd_confidence or "not_evaluable",
+        "financial_disclosure_limitations": fd_limitations or "none",
+        "earnings_forecast_revision_direction_v2": earnings_v2_direction,
+        "earnings_forecast_revision_strength_v2": earnings_v2_strength,
+        "earnings_forecast_revision_components": _safe_text(row.get("earnings_forecast_revision_components")) or _stable_json({"columns": guidance_cols}),
+        "dividend_revision_direction_v2": dividend_v2_direction,
+        "dividend_revision_strength_v2": dividend_v2_strength,
+        "dividend_revision_components": _safe_text(row.get("dividend_revision_components")) or _stable_json({"columns": dividend_cols}),
+        "financial_statement_direction": _safe_text(row.get("financial_statement_direction")) or ("context_only" if _truthy(row.get("financial_statement_event_flag")) else "insufficient_evidence"),
+        "financial_statement_strength": _safe_text(row.get("financial_statement_strength")) or "not_evaluable",
+        "financial_statement_components": _safe_text(row.get("financial_statement_components")) or "{}",
         "fundamental_event_type": event_type,
         "fundamental_event_direction": fundamental_direction,
         "fundamental_event_strength": strength,
@@ -949,6 +1229,10 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
             "fundamental_event_direction": quality_result["fundamental_event_direction"],
             "fundamental_event_strength": quality_result["fundamental_event_strength"],
             "fundamental_event_confidence": quality_result["fundamental_event_confidence"],
+            "financial_disclosure_join_status": quality_result["financial_disclosure_join_status"],
+            "financial_disclosure_confidence": quality_result["financial_disclosure_confidence"],
+            "earnings_forecast_revision_direction_v2": quality_result["earnings_forecast_revision_direction_v2"],
+            "dividend_revision_direction_v2": quality_result["dividend_revision_direction_v2"],
             "classification_confidence": confidence,
             "event_confidence_tier": quality_result["event_confidence_tier"],
             "event_classification_detail": quality_result["event_classification_detail"],
@@ -972,6 +1256,7 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
             "negative_signal": negative,
             "fundamental_event_direction": quality_result["fundamental_event_direction"],
             "fundamental_event_type": quality_result["fundamental_event_type"],
+            "financial_disclosure_join_status": quality_result["financial_disclosure_join_status"],
             "abnormal_ret_1d": _as_float(row.get("abnormal_ret_1d")),
             "abnormal_ret_1d_status": row.get("abnormal_ret_1d_status"),
             "ret_1d_status": row.get("ret_1d_status"),
@@ -1040,6 +1325,7 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
             f"liquidity={row.get('liquidity_bucket', 'unknown')}",
         ]
         evidence_parts.append(str(quality_result["fundamental_evidence_summary"]))
+        evidence_parts.append(str(quality_result["financial_disclosure_event_summary"]))
         if any("20d" in flag for flag in horizon):
             evidence_parts.append("long_horizon_unavailable")
         basis = str(row.get("abnormal_return_adjustment_basis") or "universe_adjusted_only")
@@ -1133,6 +1419,27 @@ def _build_evidence_columns(df: pd.DataFrame, duplicate_keys: set[tuple[str, str
                 "classification_basis_level": quality_result["classification_basis_level"],
                 "classification_evidence_count": quality_result["classification_evidence_count"],
                 "classification_limitation_count": quality_result["classification_limitation_count"],
+                "financial_disclosure_available": quality_result["financial_disclosure_available"],
+                "financial_disclosure_join_status": quality_result["financial_disclosure_join_status"],
+                "financial_disclosure_match_count": quality_result["financial_disclosure_match_count"],
+                "financial_disclosure_doc_types": quality_result["financial_disclosure_doc_types"],
+                "financial_disclosure_discnos": quality_result["financial_disclosure_discnos"],
+                "financial_statement_event_flag": quality_result["financial_statement_event_flag"],
+                "earnings_forecast_revision_event_flag": quality_result["earnings_forecast_revision_event_flag"],
+                "dividend_forecast_revision_event_flag": quality_result["dividend_forecast_revision_event_flag"],
+                "financial_disclosure_event_flags": quality_result["financial_disclosure_event_flags"],
+                "financial_disclosure_event_summary": quality_result["financial_disclosure_event_summary"],
+                "financial_disclosure_confidence": quality_result["financial_disclosure_confidence"],
+                "financial_disclosure_limitations": quality_result["financial_disclosure_limitations"],
+                "earnings_forecast_revision_direction_v2": quality_result["earnings_forecast_revision_direction_v2"],
+                "earnings_forecast_revision_strength_v2": quality_result["earnings_forecast_revision_strength_v2"],
+                "earnings_forecast_revision_components": quality_result["earnings_forecast_revision_components"],
+                "dividend_revision_direction_v2": quality_result["dividend_revision_direction_v2"],
+                "dividend_revision_strength_v2": quality_result["dividend_revision_strength_v2"],
+                "dividend_revision_components": quality_result["dividend_revision_components"],
+                "financial_statement_direction": quality_result["financial_statement_direction"],
+                "financial_statement_strength": quality_result["financial_statement_strength"],
+                "financial_statement_components": quality_result["financial_statement_components"],
                 "fundamental_event_type": quality_result["fundamental_event_type"],
                 "fundamental_event_direction": quality_result["fundamental_event_direction"],
                 "fundamental_event_strength": quality_result["fundamental_event_strength"],
@@ -1312,6 +1619,7 @@ def build_commercial_quality_rankings(
     excluded_audit_path: Path = DEFAULT_EXCLUDED_AUDIT,
     unclassified_audit_path: Path = DEFAULT_UNCLASSIFIED_AUDIT,
     summary_path: Path = DEFAULT_SUMMARY,
+    financial_disclosure_events_path: Path = DEFAULT_FINANCIAL_DISCLOSURE_EVENTS,
 ) -> dict[str, object]:
     source = load_candidates(input_path)
     generated_columns = {"rank", "ranking_label", "ranking_reason", "exclusion_reasons", "unclassified_reason", *EVIDENCE_COLUMNS}
@@ -1321,7 +1629,8 @@ def build_commercial_quality_rankings(
         if col not in source.columns and col not in generated_columns and col != "unclassified_reason"
     ]
     missing_output_columns = sorted(set(missing_output_columns))
-    df = _prepare(source)
+    financial_disclosure_events = load_financial_disclosure_events(financial_disclosure_events_path)
+    df = _prepare(_attach_financial_disclosure_events(source, financial_disclosure_events))
     duplicate_keys = _duplicate_keys(df)
 
     reason_lists = [_exclusion_reasons(row) for _, row in df.iterrows()]
@@ -1427,6 +1736,9 @@ def build_commercial_quality_rankings(
         "generated_at_jst": jst_now_iso(),
         "logic_version": LOGIC_VERSION,
         "input_path": str(input_path),
+        "financial_disclosure_events_path": str(financial_disclosure_events_path),
+        "financial_disclosure_events_available": bool(not financial_disclosure_events.empty),
+        "financial_disclosure_events_rows": int(len(financial_disclosure_events)),
         "input_rows": int(len(df)),
         "eligible_rows": int(len(eligible)),
         "excluded_rows": int(len(excluded)),
