@@ -110,6 +110,17 @@ def test_enrichment_joins_metadata_orders_columns_and_marks_missing(tmp_path):
         "company_name_en",
         "market_segment",
     ]
+    for col in [
+        "classification_confidence",
+        "manual_review_required",
+        "ranking_score_components",
+        "evidence_summary",
+        "horizon_flags",
+        "liquidity_flags",
+        "product_risk_flags",
+        "product_acceptability",
+    ]:
+        assert col in enriched.columns
 
     audit_enriched = pd.read_csv(files["audit"][1], dtype={"ticker": str})
     assert "rank" not in audit_enriched.columns

@@ -138,6 +138,18 @@ def dashboard_analysis_dir(tmp_path):
         "topix_size_category": "TOPIX Large70",
         "candidate_bucket": "quality_screening",
         "ranking_score": 0.9,
+        "ranking_score_components": "{\"abnormal_ret_1d\":0.04}",
+        "classification_confidence": 0.9,
+        "manual_review_required": False,
+        "manual_review_reason": "",
+        "mixed_event_flag": False,
+        "mixed_event_reason": "",
+        "evidence_summary": "classification=positive_reacted; signal=upward_revision; abnormal_ret_1d=0.04",
+        "horizon_flags": "none",
+        "liquidity_flags": "none",
+        "duplicate_event_flag": False,
+        "product_risk_flags": "none",
+        "product_acceptability": "acceptable",
         "abnormal_ret_1d": 0.04,
         "ret_1d": 0.05,
         "liquidity_bucket": "high",
@@ -254,6 +266,23 @@ def test_rankings_api_returns_rows_and_filters_without_optional_columns(dashboar
     assert payload["classification"] == "positive_reacted"
     assert payload["total"] == 1
     assert payload["rows"][0]["ticker"] == "7203"
+    for col in [
+        "classification_confidence",
+        "manual_review_required",
+        "manual_review_reason",
+        "mixed_event_flag",
+        "mixed_event_reason",
+        "ranking_score",
+        "ranking_score_components",
+        "ranking_reason",
+        "evidence_summary",
+        "horizon_flags",
+        "liquidity_flags",
+        "duplicate_event_flag",
+        "product_risk_flags",
+        "product_acceptability",
+    ]:
+        assert col in payload["rows"][0]
 
     missing_optional = _json(
         dashboard_app, "/api/rankings/positive_unreacted?topix_size_category=TOPIX%20Large70"

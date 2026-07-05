@@ -24,6 +24,7 @@ from jp_stock_analysis.analysis.jquants_commercial_quality_rankings import (
     DEFAULT_POSITIVE_REACTED,
     DEFAULT_POSITIVE_UNREACTED,
     DEFAULT_UNCLASSIFIED_AUDIT,
+    EVIDENCE_COLUMNS,
 )
 
 
@@ -84,6 +85,13 @@ DISPLAY_PREFIX = [
     "market_segment",
     "sector33_name",
     "topix_size_category",
+    "classification_confidence",
+    "manual_review_required",
+    "product_acceptability",
+    "evidence_summary",
+    "horizon_flags",
+    "liquidity_flags",
+    "product_risk_flags",
     "liquidity_bucket",
     "event_time_bucket",
     "commercial_signal",
@@ -297,6 +305,12 @@ def _enrich_file(input_path: Path, output_path: Path, metadata: pd.DataFrame) ->
     if "ticker" not in df.columns:
         df["ticker"] = ""
     df["ticker"] = df["ticker"].map(normalize_ticker)
+    for col in EVIDENCE_COLUMNS:
+        if col not in df.columns:
+            if col in {"mixed_event_flag", "manual_review_required", "duplicate_event_flag"}:
+                df[col] = False
+            else:
+                df[col] = ""
     merged = df.merge(metadata, on="ticker", how="left", suffixes=("", "_metadata"))
     for col in ADDED_COLUMNS:
         if col not in merged.columns and col != "metadata_missing":

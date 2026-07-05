@@ -58,7 +58,7 @@
       <h2>{{ title }}</h2>
       <div class="table-wrap">
         {% if rows %}
-        {% set preferred = ["ticker","company_name","DiscDate","first_time","sector33_name","market_segment","topix_size_category","candidate_bucket","ranking_score","abnormal_ret_1d","ret_1d","liquidity_bucket","is_liquid_enough","price_reaction_status_v2","commercial_signal"] %}
+        {% set preferred = ["ticker","company_name","DiscDate","first_time","sector33_name","market_segment","topix_size_category","candidate_bucket","ranking_score","classification_confidence","manual_review_required","manual_review_reason","evidence_summary","horizon_flags","liquidity_flags","product_risk_flags","product_acceptability","abnormal_ret_1d","ret_1d","liquidity_bucket","is_liquid_enough","price_reaction_status_v2","commercial_signal"] %}
         {% set cols = [] %}
         {% for col in preferred %}
           {% if col in rows[0] %}{% set _ = cols.append(col) %}{% endif %}

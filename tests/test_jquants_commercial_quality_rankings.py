@@ -100,6 +100,10 @@ def test_commercial_quality_rankings_classify_rank_and_audit_exclusions(tmp_path
         _base_row("1010", "earnings_upward", 0.01),
     ]
     rows[5]["liquidity_bucket"] = "mid"
+    rows[5]["ret_20d_status"] = "insufficient_future_price"
+    rows[5]["abnormal_ret_20d_status"] = "invalid_source_return"
+    rows[5]["ret_20d"] = None
+    rows[5]["abnormal_ret_20d"] = None
     rows[6]["liquidity_bucket"] = "low"
     rows[6]["is_liquid_enough"] = False
     rows[7]["liquidity_bucket"] = "unknown"
@@ -113,6 +117,32 @@ def test_commercial_quality_rankings_classify_rank_and_audit_exclusions(tmp_path
     assert list(positive_reacted["ticker"]) == ["1002", "1001", "1006"]
     assert list(positive_reacted["rank"]) == [1, 2, 3]
     assert set(positive_reacted["liquidity_bucket"]) == {"high", "mid"}
+    for col in [
+        "classification_confidence",
+        "classification_reason",
+        "classification_reason_components",
+        "manual_review_required",
+        "manual_review_reason",
+        "ranking_score",
+        "ranking_score_components",
+        "primary_signal",
+        "secondary_signal",
+        "evidence_summary",
+        "horizon_flags",
+        "liquidity_flags",
+        "duplicate_event_flag",
+        "data_quality_flags",
+        "product_risk_flags",
+        "product_acceptability",
+    ]:
+        assert col in positive_reacted.columns
+    assert positive_reacted["ranking_score"].notna().all()
+    assert positive_reacted["ranking_score_components"].astype(str).str.len().gt(0).all()
+    assert positive_reacted["evidence_summary"].astype(str).str.len().gt(0).all()
+    assert "ret_20d_unavailable" in positive_reacted.loc[positive_reacted["ticker"] == "1006", "horizon_flags"].iloc[0]
+    assert "long_horizon_unavailable" in positive_reacted.loc[positive_reacted["ticker"] == "1006", "evidence_summary"].iloc[0]
+    forbidden = r"buy|sell|hold|recommend|target price"
+    assert not positive_reacted["evidence_summary"].astype(str).str.lower().str.contains(forbidden, regex=True).any()
 
     assert pd.read_csv(paths["positive_unreacted"], dtype={"ticker": str}).loc[
         0, "ticker"
@@ -126,6 +156,10 @@ def test_commercial_quality_rankings_classify_rank_and_audit_exclusions(tmp_path
     assert "unknown_liquidity" in reasons["1008"]
     assert "invalid_ret_1d_status" in reasons["1009"]
     assert "invalid_abnormal_ret_1d_status" in reasons["1010"]
+    assert "liquidity_flags" in audit.columns
+    assert "low_liquidity" in audit.loc[audit["ticker"] == "1007", "liquidity_flags"].iloc[0]
+    manual = audit[audit["manual_review_required"].astype(str).str.lower().isin(["true", "1"])]
+    assert manual["manual_review_reason"].astype(str).str.len().gt(0).all()
 
     summary = json.loads(paths["summary"].read_text(encoding="utf-8"))
     assert summary["eligible_rows"] == 6
@@ -182,6 +216,11 @@ def test_commercial_quality_rankings_writes_unclassified_audit(tmp_path):
     reasons = dict(zip(unclassified["ticker"], unclassified["unclassified_reason"], strict=True))
     assert reasons["3001"] == "signal_not_positive_or_negative"
     assert reasons["3002"] == "abnormal_ret_1d_zero"
+    mixed_row = unclassified[unclassified["ticker"] == "3001"].iloc[0]
+    assert str(mixed_row["mixed_event_flag"]).lower() in {"true", "1"}
+    assert "mixed_event_context" in mixed_row["mixed_event_reason"]
+    assert str(mixed_row["manual_review_required"]).lower() in {"true", "1"}
+    assert len(str(mixed_row["manual_review_reason"])) > 0
 
     audit = pd.read_csv(paths["audit"], dtype={"ticker": str})
     assert set(audit["ticker"]) == {"3004"}
@@ -200,3 +239,21 @@ def test_commercial_quality_rankings_writes_unclassified_audit(tmp_path):
     }
     assert "unclassified_eligible_rows_exist" in summary["warnings"]
     assert summary["ranking_counts"]["positive_reacted"] == 1
+
+
+def test_commercial_quality_rankings_flags_duplicate_mixed_events(tmp_path):
+    rows = [
+        _base_row("4001", "earnings_upward_and_dividend_decrease", 0.02),
+        _base_row("4001", "earnings_upward_and_dividend_decrease", 0.01),
+    ]
+    rows[0]["dividend_revision_direction"] = "decrease"
+    rows[1]["dividend_revision_direction"] = "decrease"
+
+    paths = _run(tmp_path, rows)
+
+    ranked = pd.read_csv(paths["positive_reacted"], dtype={"ticker": str})
+    assert len(ranked) == 2
+    assert ranked["duplicate_event_flag"].astype(str).str.lower().isin(["true", "1"]).all()
+    assert ranked["mixed_event_flag"].astype(str).str.lower().isin(["true", "1"]).all()
+    assert ranked["manual_review_required"].astype(str).str.lower().isin(["true", "1"]).all()
+    assert ranked["manual_review_reason"].astype(str).str.contains("duplicate_event_context_unresolved").all()

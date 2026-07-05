@@ -631,6 +631,8 @@ def validate_ranking(combined: pd.DataFrame, duplicate_keys: set[tuple[str, str]
             for col in ["abnormal_ret_1d", "turnover_spike_ratio", "commercial_candidate_score", "avg_turnover_20d"]
             if col in row.index and not pd.isna(row.get(col))
         ]
+        if _safe_text(row.get("ranking_score_components")):
+            components.append("ranking_score_components")
         reason = _safe_text(row.get("ranking_reason"))
         duplicate = key in duplicate_keys
         insufficient = _safe_text(row.get("ret_20d_status")) != "valid"

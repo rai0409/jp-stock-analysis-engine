@@ -43,6 +43,23 @@ DOWNLOADABLE_FILES = {
     "commercial_quality_improvement_final_summary.json",
 }
 
+EVIDENCE_FIELDS = [
+    "classification_confidence",
+    "manual_review_required",
+    "manual_review_reason",
+    "mixed_event_flag",
+    "mixed_event_reason",
+    "ranking_score",
+    "ranking_score_components",
+    "ranking_reason",
+    "evidence_summary",
+    "horizon_flags",
+    "liquidity_flags",
+    "duplicate_event_flag",
+    "product_risk_flags",
+    "product_acceptability",
+]
+
 
 def load_json(path: str | Path) -> tuple[dict[str, Any], list[str]]:
     p = Path(path)
@@ -185,6 +202,12 @@ def get_rankings(
     if classification not in CLASSIFICATION_FILES:
         return None
     df, warnings = load_csv(Path(analysis_dir) / CLASSIFICATION_FILES[classification])
+    for col in EVIDENCE_FIELDS:
+        if col not in df.columns:
+            if col in {"manual_review_required", "mixed_event_flag", "duplicate_event_flag"}:
+                df[col] = False
+            else:
+                df[col] = None
     df = _search(df, q)
     df = _filter_exact(df, "sector33_name", sector)
     df = _filter_exact(df, "market_segment", market_segment)
