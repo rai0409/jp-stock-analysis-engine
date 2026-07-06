@@ -64,6 +64,28 @@ def dashboard_analysis_dir(tmp_path):
         ),
         encoding="utf-8",
     )
+    (analysis_dir / "commercial_signal_validation_summary.json").write_text(
+        json.dumps(
+            {
+                "finance_grade_signal_validation_score": 31.5,
+                "finance_grade_signal_validation_status": "research_only",
+                "validation_panel_rows": 12,
+                "leakage_risk_rows": 1,
+                "insufficient_sample_sections": 3,
+                "rank_ic_available": True,
+                "rank_ic_summary": [{"group_by": "overall", "rank_ic_spearman": 0.2}],
+                "quantile_spread_available": True,
+                "quantile_spread_summary": [{"score": "ranking_score", "top_bottom_spread": 0.01}],
+                "event_study_available": True,
+                "event_study_summary": [{"bucket": "ranking_label", "aar": 0.01}],
+                "net_spread_after_cost_available": True,
+                "sector_size_neutral_validation_available": False,
+                "stability_validation_available": True,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
     _write_csv(
         analysis_dir / "commercial_daily_dashboard_summary.csv",
@@ -271,7 +293,16 @@ def test_health_returns_snapshot_status(dashboard_app):
 
 
 def test_snapshot_api_returns_total_dashboard_rows(dashboard_app):
-    assert _json(dashboard_app, "/api/snapshot")["total_dashboard_rows"] == 7
+    payload = _json(dashboard_app, "/api/snapshot")
+    assert payload["total_dashboard_rows"] == 7
+    assert payload["finance_grade_signal_validation_status"] == "research_only"
+
+
+def test_audit_api_exposes_signal_validation_summary(dashboard_app):
+    payload = _json(dashboard_app, "/api/audit")
+    assert payload["finance_grade_signal_validation_score"] == 31.5
+    assert payload["rank_ic_available"] is True
+    assert payload["signal_validation"]["validation_panel_rows"] == 12
 
 
 def test_rankings_api_returns_rows_and_filters_without_optional_columns(dashboard_app):

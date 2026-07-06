@@ -318,6 +318,35 @@ def test_classification_quality_v2_report_metrics(tmp_path):
     assert report["financial_disclosure_price_conflict_rows"] == 0
 
 
+def test_signal_validation_summary_integrated_when_available(tmp_path):
+    financial, prices, analysis = _write_minimal_inputs(tmp_path)
+    (analysis / "commercial_signal_validation_summary.json").write_text(
+        json.dumps(
+            {
+                "finance_grade_signal_validation_score": 42.0,
+                "finance_grade_signal_validation_status": "promising_but_unstable",
+                "rank_ic_available": True,
+                "rank_ic_summary": [{"group_by": "overall", "rank_ic_spearman": 0.1}],
+                "quantile_spread_available": True,
+                "quantile_spread_summary": [{"score": "ranking_score", "top_bottom_spread": 0.02}],
+                "event_study_available": True,
+                "event_study_summary": [{"bucket": "ranking_label", "aar": 0.01}],
+                "leakage_risk_rows": 0,
+                "insufficient_sample_sections": 2,
+                "net_spread_after_cost_available": True,
+                "sector_size_neutral_validation_available": False,
+                "stability_validation_available": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = build_commercial_analysis_validity_audit(financial, prices, analysis, analysis)
+    assert report["finance_grade_signal_validation_score"] == 42.0
+    assert report["finance_grade_signal_validation_status"] == "promising_but_unstable"
+    assert report["rank_ic_available"] is True
+    assert report["insufficient_sample_sections"] == 2
+
+
 def test_universe_only_high_confidence_is_critical_issue():
     classification = pd.DataFrame(
         [

@@ -23,6 +23,7 @@ build-jquants-commercial-quality-enriched-rankings = "jp_stock_analysis.analysis
 build-jquants-commercial-daily-dashboard = "jp_stock_analysis.analysis.jquants_commercial_daily_dashboard:main"
 build-jquants-extraction-audit = "jp_stock_analysis.analysis.jquants_extraction_audit:main"
 build-jquants-commercial-analysis-validity-audit = "jp_stock_analysis.analysis.jquants_commercial_analysis_validity_audit:main"
+build-jquants-commercial-signal-validation = "jp_stock_analysis.analysis.jquants_commercial_signal_validation:main"
 fetch-jquants-daily-bars-incremental = "jp_stock_analysis.cli:main_fetch_jquants_daily_bars_incremental"
 serve-jquants-commercial-dashboard = "jp_stock_analysis.web.commercial_dashboard_app:main"
 

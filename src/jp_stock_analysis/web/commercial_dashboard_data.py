@@ -41,6 +41,15 @@ DOWNLOADABLE_FILES = {
     "commercial_quality_rankings_unclassified_audit_enriched.csv",
     "commercial_quality_rankings_enriched_summary.json",
     "commercial_quality_improvement_final_summary.json",
+    "commercial_signal_validation_panel.csv",
+    "commercial_signal_validation_summary.json",
+    "commercial_signal_validation_report.md",
+    "commercial_signal_validation_rank_ic.csv",
+    "commercial_signal_validation_quantile_spread.csv",
+    "commercial_signal_validation_event_study.csv",
+    "commercial_signal_validation_liquidity_cost.csv",
+    "commercial_signal_validation_sector_size_neutral.csv",
+    "commercial_signal_validation_stability.csv",
 }
 
 EVIDENCE_FIELDS = [
@@ -242,11 +251,44 @@ def _response(df: pd.DataFrame, total: int, limit: int, offset: int, warnings: l
 
 
 def get_snapshot(analysis_dir: str | Path) -> tuple[dict[str, Any], list[str]]:
-    return load_json(Path(analysis_dir) / "commercial_daily_latest_snapshot.json")
+    base = Path(analysis_dir)
+    payload, warnings = load_json(base / "commercial_daily_latest_snapshot.json")
+    validation, validation_warnings = load_json(base / "commercial_signal_validation_summary.json")
+    if validation:
+        for key in [
+            "finance_grade_signal_validation_score",
+            "finance_grade_signal_validation_status",
+            "validation_panel_rows",
+            "leakage_risk_rows",
+            "insufficient_sample_sections",
+        ]:
+            payload[key] = validation.get(key)
+    return payload, warnings + [w for w in validation_warnings if not w.startswith("missing file")]
 
 
 def get_audit(analysis_dir: str | Path) -> tuple[dict[str, Any], list[str]]:
-    return load_json(Path(analysis_dir) / "commercial_daily_dashboard_audit.json")
+    base = Path(analysis_dir)
+    payload, warnings = load_json(base / "commercial_daily_dashboard_audit.json")
+    validation, validation_warnings = load_json(base / "commercial_signal_validation_summary.json")
+    if validation:
+        payload["signal_validation"] = validation
+        for key in [
+            "finance_grade_signal_validation_score",
+            "finance_grade_signal_validation_status",
+            "rank_ic_available",
+            "rank_ic_summary",
+            "quantile_spread_available",
+            "quantile_spread_summary",
+            "event_study_available",
+            "event_study_summary",
+            "leakage_risk_rows",
+            "insufficient_sample_sections",
+            "net_spread_after_cost_available",
+            "sector_size_neutral_validation_available",
+            "stability_validation_available",
+        ]:
+            payload[key] = validation.get(key)
+    return payload, warnings + [w for w in validation_warnings if not w.startswith("missing file")]
 
 
 def get_daily_summary(

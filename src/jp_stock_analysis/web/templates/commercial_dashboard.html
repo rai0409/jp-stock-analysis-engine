@@ -53,6 +53,39 @@
       </div>
     </section>
 
+    <section class="panel">
+      <h2>Signal Validation</h2>
+      <dl class="meta-grid">
+        <div><dt>Status</dt><dd>{{ snapshot.get("finance_grade_signal_validation_status") or "n/a" }}</dd></div>
+        <div><dt>Score</dt><dd>{{ snapshot.get("finance_grade_signal_validation_score") if snapshot.get("finance_grade_signal_validation_score") is not none else "n/a" }}</dd></div>
+        <div><dt>Panel rows</dt><dd>{{ snapshot.get("validation_panel_rows") if snapshot.get("validation_panel_rows") is not none else "n/a" }}</dd></div>
+        <div><dt>Leakage risk rows</dt><dd>{{ snapshot.get("leakage_risk_rows") if snapshot.get("leakage_risk_rows") is not none else "n/a" }}</dd></div>
+        <div><dt>Sample limitations</dt><dd>{{ snapshot.get("insufficient_sample_sections") if snapshot.get("insufficient_sample_sections") is not none else "n/a" }}</dd></div>
+      </dl>
+      {% if audit.get("signal_validation") %}
+      <div class="validation-grid">
+        <div>
+          <h3>Rank IC</h3>
+          <pre>{{ audit.get("rank_ic_summary", [])[:2] }}</pre>
+        </div>
+        <div>
+          <h3>Quantile Spread</h3>
+          <pre>{{ audit.get("quantile_spread_summary", [])[:2] }}</pre>
+        </div>
+        <div>
+          <h3>Event Study</h3>
+          <pre>{{ audit.get("event_study_summary", [])[:2] }}</pre>
+        </div>
+        <div>
+          <h3>Limitations</h3>
+          <pre>{{ {"net_spread_after_cost_available": audit.get("net_spread_after_cost_available"), "sector_size_neutral_validation_available": audit.get("sector_size_neutral_validation_available"), "stability_validation_available": audit.get("stability_validation_available")} }}</pre>
+        </div>
+      </div>
+      {% else %}
+      <p class="muted">Signal validation summary is not available.</p>
+      {% endif %}
+    </section>
+
     {% macro render_table(title, rows) -%}
     <section class="panel">
       <h2>{{ title }}</h2>

@@ -37,6 +37,7 @@ OUTPUT_FILES = {
     "critical_issues": "commercial_analysis_critical_issues.csv",
     "scorecard": "commercial_product_readiness_scorecard.csv",
 }
+SIGNAL_VALIDATION_SUMMARY = "commercial_signal_validation_summary.json"
 
 RANKING_FILES = {
     "positive_reacted": "commercial_quality_positive_reacted_ranking_enriched.csv",
@@ -1293,6 +1294,7 @@ def build_commercial_analysis_validity_audit(
     critical = build_critical_issues(ranked, combined_all, classification, ranking, abnormal, financial_summary)
     scorecard = _scorecard(classification, price, abnormal, liquidity, ranking, signal, critical)
     classification_quality = _classification_summary(classification)
+    signal_validation = _read_json(analysis_dir / SIGNAL_VALIDATION_SUMMARY)
 
     for key, (df, cols) in {
         "code_review": (code_review, CODE_REVIEW_COLUMNS),
@@ -1408,6 +1410,19 @@ def build_commercial_analysis_validity_audit(
         "adjusted_evidence_supported_classification_ratio": classification_quality.get("adjusted_evidence_supported_classification_ratio", 0.0),
         "universe_only_high_confidence_rows": classification_quality.get("universe_only_high_confidence_rows", 0),
         "classification_quality_score": classification_quality.get("classification_quality_score", 0.0),
+        "finance_grade_signal_validation_score": signal_validation.get("finance_grade_signal_validation_score"),
+        "finance_grade_signal_validation_status": signal_validation.get("finance_grade_signal_validation_status", "not_evaluable"),
+        "rank_ic_available": bool(signal_validation.get("rank_ic_available", False)),
+        "rank_ic_summary": signal_validation.get("rank_ic_summary", []),
+        "quantile_spread_available": bool(signal_validation.get("quantile_spread_available", False)),
+        "quantile_spread_summary": signal_validation.get("quantile_spread_summary", []),
+        "event_study_available": bool(signal_validation.get("event_study_available", False)),
+        "event_study_summary": signal_validation.get("event_study_summary", []),
+        "leakage_risk_rows": signal_validation.get("leakage_risk_rows", 0),
+        "insufficient_sample_sections": signal_validation.get("insufficient_sample_sections", 0),
+        "net_spread_after_cost_available": bool(signal_validation.get("net_spread_after_cost_available", False)),
+        "sector_size_neutral_validation_available": bool(signal_validation.get("sector_size_neutral_validation_available", False)),
+        "stability_validation_available": bool(signal_validation.get("stability_validation_available", False)),
         "price_reaction_summary": _simple_summary(price),
         "abnormal_return_summary": _simple_summary(abnormal),
         "commercial_abnormal_return_v2_summary": abnormal_v2,
