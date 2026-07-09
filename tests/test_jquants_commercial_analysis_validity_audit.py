@@ -333,6 +333,21 @@ def test_signal_validation_summary_integrated_when_available(tmp_path):
                 "event_study_summary": [{"bucket": "ranking_label", "aar": 0.01}],
                 "leakage_risk_rows": 0,
                 "insufficient_sample_sections": 2,
+                "leakage_safe_signal_validation_score": 28.0,
+                "leakage_safe_signal_validation_status": "research_only",
+                "strict_pre_reaction_validation_score": 0.0,
+                "strict_pre_reaction_validation_status": "not_evaluable",
+                "walk_forward_validation_score": 10.0,
+                "walk_forward_validation_status": "research_only",
+                "validation_integrity_score": 30.0,
+                "validation_integrity_status": "research_only",
+                "score_component_contamination_rows": 3,
+                "ranking_score_usable_for_pre_reaction_validation": False,
+                "pre_reaction_score_available": False,
+                "walk_forward_split_count": 2,
+                "walk_forward_insufficient_sample_splits": 1,
+                "date_concentration_risk_level": "high",
+                "leakage_safe_validation_limitations": ["score_component_contamination"],
                 "net_spread_after_cost_available": True,
                 "sector_size_neutral_validation_available": False,
                 "stability_validation_available": True,
@@ -345,6 +360,9 @@ def test_signal_validation_summary_integrated_when_available(tmp_path):
     assert report["finance_grade_signal_validation_status"] == "promising_but_unstable"
     assert report["rank_ic_available"] is True
     assert report["insufficient_sample_sections"] == 2
+    assert report["leakage_safe_signal_validation_status"] == "research_only"
+    assert report["strict_pre_reaction_validation_status"] == "not_evaluable"
+    assert report["score_component_contamination_rows"] == 3
 
 
 def test_universe_only_high_confidence_is_critical_issue():

@@ -38,6 +38,7 @@ OUTPUT_FILES = {
     "scorecard": "commercial_product_readiness_scorecard.csv",
 }
 SIGNAL_VALIDATION_SUMMARY = "commercial_signal_validation_summary.json"
+LEAKAGE_SAFE_VALIDATION_SUMMARY = "commercial_leakage_safe_validation_summary.json"
 
 RANKING_FILES = {
     "positive_reacted": "commercial_quality_positive_reacted_ranking_enriched.csv",
@@ -1295,6 +1296,8 @@ def build_commercial_analysis_validity_audit(
     scorecard = _scorecard(classification, price, abnormal, liquidity, ranking, signal, critical)
     classification_quality = _classification_summary(classification)
     signal_validation = _read_json(analysis_dir / SIGNAL_VALIDATION_SUMMARY)
+    leakage_safe_validation = _read_json(analysis_dir / LEAKAGE_SAFE_VALIDATION_SUMMARY)
+    signal_validation = {**leakage_safe_validation, **signal_validation}
 
     for key, (df, cols) in {
         "code_review": (code_review, CODE_REVIEW_COLUMNS),
@@ -1423,6 +1426,21 @@ def build_commercial_analysis_validity_audit(
         "net_spread_after_cost_available": bool(signal_validation.get("net_spread_after_cost_available", False)),
         "sector_size_neutral_validation_available": bool(signal_validation.get("sector_size_neutral_validation_available", False)),
         "stability_validation_available": bool(signal_validation.get("stability_validation_available", False)),
+        "leakage_safe_signal_validation_score": signal_validation.get("leakage_safe_signal_validation_score"),
+        "leakage_safe_signal_validation_status": signal_validation.get("leakage_safe_signal_validation_status", "not_evaluable"),
+        "strict_pre_reaction_validation_score": signal_validation.get("strict_pre_reaction_validation_score"),
+        "strict_pre_reaction_validation_status": signal_validation.get("strict_pre_reaction_validation_status", "not_evaluable"),
+        "walk_forward_validation_score": signal_validation.get("walk_forward_validation_score"),
+        "walk_forward_validation_status": signal_validation.get("walk_forward_validation_status", "not_evaluable"),
+        "validation_integrity_score": signal_validation.get("validation_integrity_score"),
+        "validation_integrity_status": signal_validation.get("validation_integrity_status", "not_evaluable"),
+        "score_component_contamination_rows": signal_validation.get("score_component_contamination_rows", 0),
+        "ranking_score_usable_for_pre_reaction_validation": signal_validation.get("ranking_score_usable_for_pre_reaction_validation", False),
+        "pre_reaction_score_available": signal_validation.get("pre_reaction_score_available", False),
+        "walk_forward_split_count": signal_validation.get("walk_forward_split_count", 0),
+        "walk_forward_insufficient_sample_splits": signal_validation.get("walk_forward_insufficient_sample_splits", 0),
+        "date_concentration_risk_level": signal_validation.get("date_concentration_risk_level", "not_evaluable"),
+        "leakage_safe_validation_limitations": signal_validation.get("leakage_safe_validation_limitations", []),
         "price_reaction_summary": _simple_summary(price),
         "abnormal_return_summary": _simple_summary(abnormal),
         "commercial_abnormal_return_v2_summary": abnormal_v2,

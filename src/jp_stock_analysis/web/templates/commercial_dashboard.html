@@ -56,7 +56,11 @@
     <section class="panel">
       <h2>Signal Validation</h2>
       <dl class="meta-grid">
-        <div><dt>Status</dt><dd>{{ snapshot.get("finance_grade_signal_validation_status") or "n/a" }}</dd></div>
+        <div><dt>Current mode</dt><dd>{{ snapshot.get("finance_grade_signal_validation_status") or "n/a" }}</dd></div>
+        <div><dt>Leakage-safe</dt><dd>{{ snapshot.get("leakage_safe_signal_validation_status") or "n/a" }}</dd></div>
+        <div><dt>Strict pre-reaction</dt><dd>{{ snapshot.get("strict_pre_reaction_validation_status") or "n/a" }}</dd></div>
+        <div><dt>Walk-forward</dt><dd>{{ snapshot.get("walk_forward_validation_status") or "n/a" }}</dd></div>
+        <div><dt>Integrity</dt><dd>{{ snapshot.get("validation_integrity_status") or "n/a" }}</dd></div>
         <div><dt>Score</dt><dd>{{ snapshot.get("finance_grade_signal_validation_score") if snapshot.get("finance_grade_signal_validation_score") is not none else "n/a" }}</dd></div>
         <div><dt>Panel rows</dt><dd>{{ snapshot.get("validation_panel_rows") if snapshot.get("validation_panel_rows") is not none else "n/a" }}</dd></div>
         <div><dt>Leakage risk rows</dt><dd>{{ snapshot.get("leakage_risk_rows") if snapshot.get("leakage_risk_rows") is not none else "n/a" }}</dd></div>
@@ -78,7 +82,7 @@
         </div>
         <div>
           <h3>Limitations</h3>
-          <pre>{{ {"net_spread_after_cost_available": audit.get("net_spread_after_cost_available"), "sector_size_neutral_validation_available": audit.get("sector_size_neutral_validation_available"), "stability_validation_available": audit.get("stability_validation_available")} }}</pre>
+          <pre>{{ {"leakage_rows": audit.get("leakage_risk_rows"), "score_contamination": audit.get("score_component_contamination_rows"), "small_sample": audit.get("insufficient_sample_sections"), "date_concentration": audit.get("date_concentration_risk_level"), "insufficient_walk_forward_splits": audit.get("walk_forward_insufficient_sample_splits"), "top_limitations": audit.get("leakage_safe_validation_limitations", [])} }}</pre>
         </div>
       </div>
       {% else %}

@@ -72,6 +72,23 @@ def dashboard_analysis_dir(tmp_path):
                 "validation_panel_rows": 12,
                 "leakage_risk_rows": 1,
                 "insufficient_sample_sections": 3,
+                "leakage_safe_signal_validation_score": 24.0,
+                "leakage_safe_signal_validation_status": "research_only",
+                "strict_pre_reaction_validation_score": 0.0,
+                "strict_pre_reaction_validation_status": "not_evaluable",
+                "walk_forward_validation_score": 8.0,
+                "walk_forward_validation_status": "research_only",
+                "validation_integrity_score": 22.0,
+                "validation_integrity_status": "research_only",
+                "score_component_contamination_rows": 2,
+                "ranking_score_usable_for_pre_reaction_validation": False,
+                "pre_reaction_score_available": False,
+                "walk_forward_split_count": 2,
+                "walk_forward_insufficient_sample_splits": 1,
+                "date_concentration_risk_level": "high",
+                "sector_concentration_risk_level": "medium",
+                "ticker_concentration_risk_level": "low",
+                "leakage_safe_validation_limitations": ["score_component_contamination"],
                 "rank_ic_available": True,
                 "rank_ic_summary": [{"group_by": "overall", "rank_ic_spearman": 0.2}],
                 "quantile_spread_available": True,
@@ -296,6 +313,9 @@ def test_snapshot_api_returns_total_dashboard_rows(dashboard_app):
     payload = _json(dashboard_app, "/api/snapshot")
     assert payload["total_dashboard_rows"] == 7
     assert payload["finance_grade_signal_validation_status"] == "research_only"
+    assert payload["leakage_safe_signal_validation_status"] == "research_only"
+    assert payload["strict_pre_reaction_validation_status"] == "not_evaluable"
+    assert payload["walk_forward_validation_status"] == "research_only"
 
 
 def test_audit_api_exposes_signal_validation_summary(dashboard_app):
@@ -303,6 +323,8 @@ def test_audit_api_exposes_signal_validation_summary(dashboard_app):
     assert payload["finance_grade_signal_validation_score"] == 31.5
     assert payload["rank_ic_available"] is True
     assert payload["signal_validation"]["validation_panel_rows"] == 12
+    assert payload["leakage_safe_signal_validation_status"] == "research_only"
+    assert payload["score_component_contamination_rows"] == 2
 
 
 def test_rankings_api_returns_rows_and_filters_without_optional_columns(dashboard_app):

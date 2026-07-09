@@ -13,8 +13,13 @@ from jp_stock_analysis.analysis.jquants_commercial_signal_validation import (
     build_liquidity_cost,
     build_quantile_spread,
     build_rank_ic,
+    build_concentration_audit,
+    build_date_level_validation,
+    build_score_component_contamination_audit,
+    build_walk_forward_validation,
     build_sector_size_neutral,
     build_stability,
+    score_leakage_safe_validation,
     score_signal_validation,
 )
 
@@ -112,6 +117,65 @@ def test_leakage_flag_when_reaction_base_precedes_disclosure():
     panel = build_event_validation_panel(pd.DataFrame(rows))
     assert bool(panel.loc[0, "leakage_risk_flag"]) is True
     assert "reaction_base_before_disclosure" in panel.loc[0, "validation_exclusion_reason"]
+    assert panel.loc[0, "leakage_safety_status"] == "unsafe"
+    assert bool(panel.loc[0, "leakage_safe_flag"]) is False
+
+
+def test_after_close_same_day_is_timing_limited_and_not_strict_safe():
+    rows = _ranking_rows(1)
+    rows[0]["first_time"] = "15:30:00"
+    panel = build_event_validation_panel(pd.DataFrame(rows))
+    assert panel.loc[0, "leakage_safety_status"] == "timing_limited"
+    assert bool(panel.loc[0, "same_day_reaction_risk_flag"]) is True
+    assert bool(panel.loc[0, "strict_validation_eligible_flag"]) is False
+
+
+def test_missing_timing_metadata_is_not_safe():
+    rows = _ranking_rows(1)
+    rows[0]["reaction_base_date"] = None
+    panel = build_event_validation_panel(pd.DataFrame(rows))
+    assert panel.loc[0, "leakage_safety_status"] == "insufficient_timing_metadata"
+    assert bool(panel.loc[0, "leakage_safe_flag"]) is False
+
+
+def test_score_component_contamination_detects_return_patterns():
+    rows = _ranking_rows(1)
+    rows[0]["ranking_score_components"] = '{"abnormal_ret_1d": 0.5, "reaction_flag": true}'
+    panel = build_event_validation_panel(pd.DataFrame(rows))
+    audit = build_score_component_contamination_audit(panel)
+    assert bool(panel.loc[0, "future_return_score_contamination_flag"]) is True
+    assert len(audit) == 1
+    assert "abnormal_ret" in audit.loc[0, "matched_patterns"]
+
+
+def test_strict_pre_reaction_mode_not_evaluable_for_contaminated_score():
+    rows = _ranking_rows(12)
+    for row in rows:
+        row["ranking_score_components"] = '{"abnormal_ret_1d": 0.5}'
+    panel = build_event_validation_panel(pd.DataFrame(rows))
+    safe = panel[panel["leakage_safe_flag"].astype(bool)]
+    contamination = build_score_component_contamination_audit(panel)
+    summary = score_leakage_safe_validation(
+        panel,
+        safe,
+        build_walk_forward_validation(safe),
+        build_date_level_validation(safe),
+        contamination,
+        build_concentration_audit(safe),
+    )
+    assert summary["ranking_score_usable_for_pre_reaction_validation"] is False
+    assert summary["strict_pre_reaction_validation_status"] == "not_evaluable"
+
+
+def test_leakage_safe_mode_excludes_unsafe_rows_and_missing_20d_stays_missing():
+    rows = _ranking_rows(3)
+    rows[0]["reaction_base_date"] = "2025-01-01"
+    rows[0]["DiscDate"] = "2025-01-10"
+    rows[1]["ret_20d"] = None
+    panel = build_event_validation_panel(pd.DataFrame(rows))
+    safe = panel[panel["leakage_safe_flag"].astype(bool)]
+    assert len(safe) == 2
+    assert pd.isna(panel.loc[1, "fwd_ret_20d"])
 
 
 def test_rank_ic_calculation_with_deterministic_fixture():
@@ -130,6 +194,49 @@ def test_rank_ic_calculation_with_deterministic_fixture():
 def test_insufficient_sample_returns_insufficient_sample():
     rank_ic = build_rank_ic(_panel(2))
     assert "insufficient_sample" in set(rank_ic["status"])
+
+
+def test_walk_forward_splits_are_chronological_and_sample_guarded():
+    rows = _ranking_rows(18)
+    for i, row in enumerate(rows):
+        row["DiscDate"] = f"2025-01-{1 + i // 6:02d}"
+        row["reaction_base_date"] = row["DiscDate"]
+    panel = build_event_validation_panel(pd.DataFrame(rows))
+    wf = build_walk_forward_validation(panel)
+    assert list(wf["validation_start_date"].dropna()) == ["2025-01-02", "2025-01-03"]
+    assert "insufficient_sample" in set(wf["status"])
+
+
+def test_date_level_validation_and_concentration_audit():
+    rows = _ranking_rows(12)
+    for row in rows[:9]:
+        row["DiscDate"] = "2025-01-10"
+        row["reaction_base_date"] = "2025-01-10"
+        row["sector33_name"] = "Dominant"
+    panel = build_event_validation_panel(pd.DataFrame(rows))
+    date_level = build_date_level_validation(panel)
+    concentration = build_concentration_audit(panel)
+    assert "ok" in set(date_level["status"])
+    assert concentration.loc[0, "date_concentration_risk_level"] == "high"
+    assert concentration.loc[0, "sector_concentration_risk_level"] == "high"
+
+
+def test_leakage_safe_score_caps_when_unsafe_rows_present():
+    rows = _ranking_rows(20)
+    rows[0]["reaction_base_date"] = "2025-01-01"
+    rows[0]["DiscDate"] = "2025-01-10"
+    panel = build_event_validation_panel(pd.DataFrame(rows))
+    safe = panel[panel["leakage_safe_flag"].astype(bool)]
+    summary = score_leakage_safe_validation(
+        panel,
+        safe,
+        build_walk_forward_validation(safe),
+        build_date_level_validation(safe),
+        build_score_component_contamination_audit(panel),
+        build_concentration_audit(safe),
+    )
+    assert summary["excluded_unsafe_rows"] == 1
+    assert summary["leakage_safe_signal_validation_score"] <= 60.0
 
 
 def test_quantile_spread_and_monotonicity_score():

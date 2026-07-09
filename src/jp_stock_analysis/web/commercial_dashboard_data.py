@@ -50,6 +50,13 @@ DOWNLOADABLE_FILES = {
     "commercial_signal_validation_liquidity_cost.csv",
     "commercial_signal_validation_sector_size_neutral.csv",
     "commercial_signal_validation_stability.csv",
+    "commercial_leakage_safe_validation_panel.csv",
+    "commercial_leakage_safe_validation_summary.json",
+    "commercial_leakage_safe_validation_report.md",
+    "commercial_walk_forward_validation.csv",
+    "commercial_date_level_validation.csv",
+    "commercial_score_component_contamination_audit.csv",
+    "commercial_validation_concentration_audit.csv",
 }
 
 EVIDENCE_FIELDS = [
@@ -254,24 +261,50 @@ def get_snapshot(analysis_dir: str | Path) -> tuple[dict[str, Any], list[str]]:
     base = Path(analysis_dir)
     payload, warnings = load_json(base / "commercial_daily_latest_snapshot.json")
     validation, validation_warnings = load_json(base / "commercial_signal_validation_summary.json")
+    leakage_validation, leakage_warnings = load_json(base / "commercial_leakage_safe_validation_summary.json")
+    validation = {**leakage_validation, **validation}
     if validation:
         for key in [
             "finance_grade_signal_validation_score",
             "finance_grade_signal_validation_status",
+            "leakage_safe_signal_validation_status",
+            "strict_pre_reaction_validation_status",
+            "walk_forward_validation_status",
+            "validation_integrity_status",
             "validation_panel_rows",
             "leakage_risk_rows",
             "insufficient_sample_sections",
         ]:
             payload[key] = validation.get(key)
-    return payload, warnings + [w for w in validation_warnings if not w.startswith("missing file")]
+    extra_warnings = [
+        w
+        for w in [*validation_warnings, *leakage_warnings]
+        if not w.startswith("missing file")
+    ]
+    return payload, warnings + extra_warnings
 
 
 def get_audit(analysis_dir: str | Path) -> tuple[dict[str, Any], list[str]]:
     base = Path(analysis_dir)
     payload, warnings = load_json(base / "commercial_daily_dashboard_audit.json")
     validation, validation_warnings = load_json(base / "commercial_signal_validation_summary.json")
+    leakage_validation, leakage_warnings = load_json(base / "commercial_leakage_safe_validation_summary.json")
+    validation = {**leakage_validation, **validation}
     if validation:
         payload["signal_validation"] = validation
+        payload["leakage_safe_validation"] = leakage_validation or {
+            key: validation.get(key)
+            for key in [
+                "leakage_safe_signal_validation_score",
+                "leakage_safe_signal_validation_status",
+                "strict_pre_reaction_validation_score",
+                "strict_pre_reaction_validation_status",
+                "walk_forward_validation_score",
+                "walk_forward_validation_status",
+                "validation_integrity_score",
+                "validation_integrity_status",
+            ]
+        }
         for key in [
             "finance_grade_signal_validation_score",
             "finance_grade_signal_validation_status",
@@ -286,9 +319,31 @@ def get_audit(analysis_dir: str | Path) -> tuple[dict[str, Any], list[str]]:
             "net_spread_after_cost_available",
             "sector_size_neutral_validation_available",
             "stability_validation_available",
+            "leakage_safe_signal_validation_score",
+            "leakage_safe_signal_validation_status",
+            "strict_pre_reaction_validation_score",
+            "strict_pre_reaction_validation_status",
+            "walk_forward_validation_score",
+            "walk_forward_validation_status",
+            "validation_integrity_score",
+            "validation_integrity_status",
+            "score_component_contamination_rows",
+            "ranking_score_usable_for_pre_reaction_validation",
+            "pre_reaction_score_available",
+            "walk_forward_split_count",
+            "walk_forward_insufficient_sample_splits",
+            "date_concentration_risk_level",
+            "sector_concentration_risk_level",
+            "ticker_concentration_risk_level",
+            "leakage_safe_validation_limitations",
         ]:
             payload[key] = validation.get(key)
-    return payload, warnings + [w for w in validation_warnings if not w.startswith("missing file")]
+    extra_warnings = [
+        w
+        for w in [*validation_warnings, *leakage_warnings]
+        if not w.startswith("missing file")
+    ]
+    return payload, warnings + extra_warnings
 
 
 def get_daily_summary(
