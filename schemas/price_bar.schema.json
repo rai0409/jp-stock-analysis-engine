@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jp-stock-analysis-engine.local/schemas/price_bar.schema.json",
+  "title": "Price Bar",
+  "description": "Point-in-time daily price bar for import, analysis, and validation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source",
+    "local_code",
+    "price_date",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "turnover_value",
+    "adjustment_factor",
+    "is_adjusted",
+    "available_from_timestamp",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.\\d+\\.\\d+$"
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "local_code": {
+      "type": "string",
+      "pattern": "^[0-9A-Z]{4,5}$"
+    },
+    "price_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "open": {
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "high": {
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "low": {
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "close": {
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "volume": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "turnover_value": {
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "adjustment_factor": {
+      "type": ["number", "null"]
+    },
+    "is_adjusted": {
+      "type": "boolean"
+    },
+    "available_from_timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

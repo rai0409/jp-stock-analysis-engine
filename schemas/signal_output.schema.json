@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jp-stock-analysis-engine.local/schemas/signal_output.schema.json",
+  "title": "Signal Output",
+  "description": "Research-only signal output for validation support and analyst review.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "local_code",
+    "signal_date",
+    "asof_timestamp",
+    "feature_cutoff_timestamp",
+    "label_start_timestamp",
+    "label_end_timestamp",
+    "signal_name",
+    "signal_score",
+    "signal_direction",
+    "ranking_bucket",
+    "validation_status",
+    "leakage_safe_flag",
+    "cost_adjusted_available",
+    "capacity_jpy",
+    "research_only_flag",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.\\d+\\.\\d+$"
+    },
+    "local_code": {
+      "type": "string",
+      "pattern": "^[0-9A-Z]{4,5}$"
+    },
+    "signal_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "asof_timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "feature_cutoff_timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "label_start_timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "label_end_timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "signal_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "signal_score": {
+      "type": ["number", "null"]
+    },
+    "signal_direction": {
+      "type": "string",
+      "enum": ["positive", "negative", "neutral", "unknown"]
+    },
+    "ranking_bucket": {
+      "type": ["integer", "null"],
+      "minimum": 1
+    },
+    "validation_status": {
+      "type": "string",
+      "enum": ["pass", "fail", "unknown", "analyst_review_required"]
+    },
+    "leakage_safe_flag": {
+      "type": "boolean"
+    },
+    "cost_adjusted_available": {
+      "type": "boolean"
+    },
+    "capacity_jpy": {
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "research_only_flag": {
+      "type": "boolean",
+      "const": true
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

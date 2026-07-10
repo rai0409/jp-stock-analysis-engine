@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jp-stock-analysis-engine.local/schemas/disclosure_event.schema.json",
+  "title": "Disclosure Event",
+  "description": "Point-in-time disclosure event exported by topix1000_disclosure_platform for analysis import.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source",
+    "disclosure_id",
+    "local_code",
+    "edinet_code",
+    "issuer_name",
+    "document_type",
+    "event_type",
+    "event_direction",
+    "confidence",
+    "disclosed_at",
+    "available_from_timestamp",
+    "raw_uri",
+    "content_hash",
+    "revision_of",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.\\d+\\.\\d+$"
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "disclosure_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "local_code": {
+      "type": "string",
+      "pattern": "^[0-9A-Z]{4,5}$"
+    },
+    "edinet_code": {
+      "type": ["string", "null"]
+    },
+    "issuer_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "document_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "event_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "event_direction": {
+      "type": "string",
+      "enum": ["positive", "negative", "neutral", "mixed", "unknown"]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "disclosed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "available_from_timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "raw_uri": {
+      "type": "string",
+      "minLength": 1
+    },
+    "content_hash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision_of": {
+      "type": ["string", "null"]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

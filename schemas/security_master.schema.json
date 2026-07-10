@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jp-stock-analysis-engine.local/schemas/security_master.schema.json",
+  "title": "Security Master",
+  "description": "Point-in-time security master record with effective dating for historical joins.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "local_code",
+    "edinet_code",
+    "company_name",
+    "market_segment",
+    "sector33_code",
+    "sector33_name",
+    "topix_size_category",
+    "listed_date",
+    "delisted_date",
+    "effective_from",
+    "effective_to",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.\\d+\\.\\d+$"
+    },
+    "local_code": {
+      "type": "string",
+      "pattern": "^[0-9A-Z]{4,5}$"
+    },
+    "edinet_code": {
+      "type": ["string", "null"]
+    },
+    "company_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "market_segment": {
+      "type": ["string", "null"]
+    },
+    "sector33_code": {
+      "type": ["string", "null"]
+    },
+    "sector33_name": {
+      "type": ["string", "null"]
+    },
+    "topix_size_category": {
+      "type": ["string", "null"]
+    },
+    "listed_date": {
+      "type": ["string", "null"],
+      "format": "date"
+    },
+    "delisted_date": {
+      "type": ["string", "null"],
+      "format": "date"
+    },
+    "effective_from": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "effective_to": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

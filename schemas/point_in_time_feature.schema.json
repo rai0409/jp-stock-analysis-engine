@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jp-stock-analysis-engine.local/schemas/point_in_time_feature.schema.json",
+  "title": "Point-in-Time Feature",
+  "description": "Leakage-controlled feature record for research and validation support.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "local_code",
+    "feature_date",
+    "asof_timestamp",
+    "available_from_timestamp",
+    "feature_cutoff_timestamp",
+    "source_event_ids",
+    "feature_name",
+    "feature_value",
+    "feature_type",
+    "feature_group",
+    "leakage_safe_flag",
+    "leakage_status",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.\\d+\\.\\d+$"
+    },
+    "local_code": {
+      "type": "string",
+      "pattern": "^[0-9A-Z]{4,5}$"
+    },
+    "feature_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "asof_timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "available_from_timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "feature_cutoff_timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source_event_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "feature_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "feature_value": {
+      "type": ["number", "string", "boolean", "null"]
+    },
+    "feature_type": {
+      "type": "string",
+      "enum": ["numeric", "categorical", "boolean", "text", "missing"]
+    },
+    "feature_group": {
+      "type": "string",
+      "minLength": 1
+    },
+    "leakage_safe_flag": {
+      "type": "boolean"
+    },
+    "leakage_status": {
+      "type": "string",
+      "enum": ["pass", "fail", "unknown", "analyst_review_required"]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

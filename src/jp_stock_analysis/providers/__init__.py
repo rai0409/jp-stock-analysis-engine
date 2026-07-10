@@ -18,6 +18,7 @@ from jp_stock_analysis.providers.local_csv import (
 from jp_stock_analysis.providers.local_json import read_json, write_json
 from jp_stock_analysis.providers.news_stub import NewsProvider
 from jp_stock_analysis.providers.tdnet_stub import TDnetProvider
+from jp_stock_analysis.providers.topix1000_gold_export import Topix1000GoldExportProvider
 
 __all__ = [
     "DisclosureProvider",
@@ -28,6 +29,7 @@ __all__ = [
     "NewsProvider",
     "PriceDataProvider",
     "TDnetProvider",
+    "Topix1000GoldExportProvider",
     "load_company_metadata_csv",
     "load_disclosure_texts",
     "load_fundamentals_csv",
