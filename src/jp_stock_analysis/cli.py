@@ -162,6 +162,10 @@ from jp_stock_analysis.validation.forward_returns import (
     load_forward_return_report,
     write_forward_return_outputs,
 )
+from jp_stock_analysis.validation.jquants_financial_summary import (
+    acquire_incremental as acquire_financial_summary,
+    verify_financial_summary,
+)
 from jp_stock_analysis.validation.jquants_daily_bars import (
     DEFAULT_ADJUSTED_CLOSE_FILE,
     DEFAULT_FEATURE_FILE,
@@ -570,6 +574,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="permit live J-Quants calls through the provider (requires JQUANTS_API_KEY)",
     )
+
+    financial_summary = subparsers.add_parser("fetch-jquants-financial-summary-incremental")
+    financial_summary.add_argument("--universe-file", required=True)
+    financial_summary.add_argument("--store-dir", required=True)
+    financial_summary.add_argument("--cache-dir", default=".cache/jquants")
+    financial_summary.add_argument("--sleep-seconds", type=float, default=90)
+    financial_summary.add_argument("--rate-limit-cooldown-seconds", type=float, default=900)
+    financial_summary.add_argument("--max-rate-limit-retries", type=int, default=6)
+    financial_summary.add_argument("--allow-network", action="store_true")
+    verify_financial = subparsers.add_parser("verify-jquants-financial-summary")
+    verify_financial.add_argument("--store-dir", required=True)
+    verify_financial.add_argument("--universe-file", required=True)
 
     coverage_filter = subparsers.add_parser(
         "filter-topix-universe-by-coverage",
@@ -1286,6 +1302,22 @@ def _run_fetch_jquants_listed_master(args: argparse.Namespace) -> int:
     )
     print(f"Report written to: {result.report_path}")
     return 0
+
+
+def _run_fetch_jquants_financial_summary(args: argparse.Namespace) -> int:
+    if not args.allow_network:
+        print("error: fetch-jquants-financial-summary-incremental requires --allow-network", file=sys.stderr); return 1
+    try:
+        state = acquire_financial_summary(JQuantsProvider(cache_dir=args.cache_dir, live=True), universe_file=args.universe_file, store_dir=args.store_dir, allow_network=True, sleep_seconds=args.sleep_seconds, rate_limit_cooldown_seconds=args.rate_limit_cooldown_seconds, max_rate_limit_retries=args.max_rate_limit_retries)
+    except (ValueError, JPStockAnalysisError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr); return 1
+    print(f"Financial Summary store updated: rows={state['rows']} -> {state['output_file']}"); return 0 if not state['failed_tickers'] else 2
+
+
+def _run_verify_jquants_financial_summary(args: argparse.Namespace) -> int:
+    try: verify_financial_summary(store_dir=args.store_dir, universe_file=args.universe_file)
+    except (ValueError, JPStockAnalysisError, OSError) as exc: print(f"error: {exc}", file=sys.stderr); return 1
+    print("Financial Summary store verified"); return 0
 
 
 def _run_filter_topix_universe_by_coverage(args: argparse.Namespace) -> int:
@@ -2250,6 +2282,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_fetch_jquants_daily_bars_incremental(args)
     if args.command == "fetch-jquants-listed-master":
         return _run_fetch_jquants_listed_master(args)
+    if args.command == "fetch-jquants-financial-summary-incremental":
+        return _run_fetch_jquants_financial_summary(args)
+    if args.command == "verify-jquants-financial-summary":
+        return _run_verify_jquants_financial_summary(args)
     if args.command == "filter-topix-universe-by-coverage":
         return _run_filter_topix_universe_by_coverage(args)
     if args.command == "verify-price-store":

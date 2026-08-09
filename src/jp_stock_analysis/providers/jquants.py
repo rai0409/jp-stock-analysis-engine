@@ -346,6 +346,10 @@ class JQuantsProvider:
         statements.sort(key=lambda s: (s.fiscal_year is None, s.fiscal_year or 0))
         return statements
 
+    def get_statement_rows(self, ticker: str) -> list[dict[str, Any]]:
+        """Return cached/live raw Financial Summary rows without remapping them."""
+        return self._load_rows("statements", ticker, {})
+
     def get_metadata(self, ticker: str) -> CompanyMetadata | None:
         rows = self._load_rows("listed_info", ticker, {})
         return _map_listed_info(rows[0], ticker) if rows else None
