@@ -35,6 +35,55 @@ jobs:
       - name: Full pytest
         run: python -m pytest -q --tb=short -ra
 
+      - name: Diagnose synthetic golden mismatch
+        if: ${{ failure() }}
+        run: |
+          python - <<'PYCODE'
+          import json
+          import platform
+          import tempfile
+          from pathlib import Path
+
+          import numpy
+          import pandas
+          from jp_stock_analysis.modeling.regression_baseline import (
+              GOLDEN_RUN_ID,
+              GOLDEN_TIMESTAMP,
+              compare_to_baseline,
+              load_baseline,
+              run_golden_synthetic_pipeline,
+          )
+
+          print("PYTHON:", platform.python_version())
+          print("NUMPY:", numpy.__version__)
+          print("PANDAS:", pandas.__version__)
+
+          baseline = load_baseline(
+              "tests/fixtures/pipeline_baseline/golden_pipeline_baseline.json"
+          )
+
+          with tempfile.TemporaryDirectory() as temp:
+              fresh = run_golden_synthetic_pipeline(Path(temp) / "diagnostic")
+              report = compare_to_baseline(
+                  fresh,
+                  baseline,
+                  run_id=GOLDEN_RUN_ID,
+                  fixed_timestamp=GOLDEN_TIMESTAMP,
+              )
+
+              print("REGRESSION_COUNTS:", report["counts"])
+              for entry in report["entries"]:
+                  if entry["classification"] == "unchanged":
+                      continue
+                  print("CHANGED_ARTIFACT:", entry["relative_path"])
+                  print("CLASSIFICATION:", entry["classification"])
+                  if entry.get("diff"):
+                      print(
+                          "DIFF:",
+                          json.dumps(entry["diff"], sort_keys=True)
+                      )
+          PYCODE
+
       - name: Ruff changed recovery modules
         run: |
           python -m ruff check \
