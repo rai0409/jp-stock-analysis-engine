@@ -168,3 +168,91 @@ def test_committed_fixture_is_safe_to_commit():
     baseline = json.loads(blob)
     assert baseline["synthetic"] is True
     assert "not real market evidence" in baseline["synthetic_warning"]
+
+
+def test_scoped_golden_diagnostic_roundoff_keeps_exact_raw_hash(tmp_path):
+    """Cross-platform last-bit noise cannot invalidate canonical golden diagnostics."""
+    a = tmp_path / "golden_a"
+    b = tmp_path / "golden_b"
+    samples = {
+        "linear/ridge/model_metadata.json": (
+            {"coefficients": {"roa": -0.6595186024330528},
+             "scaled_coefficients": {"roa": -0.20068511980381365}},
+            {"coefficients": {"roa": -0.6595186024330505},
+             "scaled_coefficients": {"roa": -0.20068511980381296}},
+        ),
+        "linear/elastic_net/model_metadata.json": (
+            {"intercept": -0.00278914433873497,
+             "objective_history": [0.03750047869956567]},
+            {"intercept": -0.0027891443387349697,
+             "objective_history": [0.03750047869956566]},
+        ),
+        "modeling_report.json": (
+            {"model_diversity": {"linear_models": {
+                "ridge": {"coefficients": {"roa": -0.6595186024330528},
+                          "scaled_coefficients": {"roa": -0.20068511980381365}},
+                "elastic_net": {"intercept": -0.00278914433873497}}},
+             "neutralized_rank_metrics": {"exposure_diagnostics": {
+                 "post_neutralization_exposure_corr": {"momentum_60d": -2.3728689627520734e-15},
+                 "max_abs_exposure_corr_after": 2.3728689627520734e-15}}},
+            {"model_diversity": {"linear_models": {
+                "ridge": {"coefficients": {"roa": -0.6595186024330505},
+                          "scaled_coefficients": {"roa": -0.20068511980381296}},
+                "elastic_net": {"intercept": -0.0027891443387349697}}},
+             "neutralized_rank_metrics": {"exposure_diagnostics": {
+                 "post_neutralization_exposure_corr": {"momentum_60d": 6.819352798519816e-16},
+                 "max_abs_exposure_corr_after": 6.819352798519816e-16}}},
+        ),
+        "neutralization/neutralized_metrics.json": (
+            {"exposure_diagnostics": {
+                "post_neutralization_exposure_corr": {"momentum_60d": -2.3728689627520734e-15},
+                "max_abs_exposure_corr_after": 2.3728689627520734e-15}},
+            {"exposure_diagnostics": {
+                "post_neutralization_exposure_corr": {"momentum_60d": 6.819352798519816e-16},
+                "max_abs_exposure_corr_after": 6.819352798519816e-16}},
+        ),
+    }
+    for rel, (left, right) in samples.items():
+        for parent, value in ((a, left), (b, right)):
+            file = parent / rel
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
+
+    old = capture_baseline(a)
+    new = capture_baseline(b)
+    old_by = {e["relative_path"]: e for e in old["artifacts"]}
+    new_by = {e["relative_path"]: e for e in new["artifacts"]}
+    for rel in samples:
+        assert old_by[rel]["raw_sha256"] != new_by[rel]["raw_sha256"]
+        assert old_by[rel]["canonical_sha256"] == new_by[rel]["canonical_sha256"]
+    report = compare_to_baseline(b, old)
+    assert report["regression_detected"] is False
+    assert report["counts"] == {CLASS_VOLATILE_ONLY: 4}
+
+
+def test_scoped_golden_diagnostic_real_changes_still_fail(tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
+    examples = {
+        "linear/ridge/model_metadata.json": (
+            {"coefficients": {"x": 0.1}},
+            {"coefficients": {"x": 0.10000001}},
+        ),
+        "ranking/ranking_metrics.json": (
+            {"x": 0.1},
+            {"x": 0.100000000000001},
+        ),
+        "neutralization/neutralized_metrics.json": (
+            {"exposure_diagnostics": {
+                "post_neutralization_exposure_corr": {"x": 0.0}}, "status": "ok"},
+            {"exposure_diagnostics": {
+                "post_neutralization_exposure_corr": {"x": 0.0}}, "status": "changed"},
+        ),
+    }
+    for rel, (left, right) in examples.items():
+        for parent, payload in ((a, left), (b, right)):
+            file = parent / rel
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    report = compare_to_baseline(b, capture_baseline(a))
+    assert report["regression_detected"] is True
+    assert report["counts"][CLASS_CHANGED] == len(examples)

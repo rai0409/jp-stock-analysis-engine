@@ -49,8 +49,15 @@ Each tracked artifact is classified by comparing a fresh run to the baseline:
 
 `changed` diffs report changed JSON top-level keys, CSV row/column changes, text
 line-count changes, and **headline-metric** before/after values (e.g.
-`ranking_metrics.json` `horizons.0.ic_mean`). Numeric differences and missing
-artifacts are **never** ignored.
+`ranking_metrics.json` `horizons.0.ic_mean`). Missing artifacts and substantive numeric differences are never ignored.
+Golden canonical SHA fingerprints additionally round only explicitly listed
+diagnostic-only fields (Ridge/Elastic Net metadata and post-neutralization
+exposure correlations) to 12 decimal places to avoid cross-platform
+floating-point last-bit noise. Raw SHA fingerprints remain exact; this
+precision policy does not affect stored output JSON, model calculations,
+other numerical fields, or actual regression-detection thresholds.
+These diagnostic-only raw differences may appear as `volatile_only`.
+The approved baseline/ledger must be promoted after changing this contract.
 
 ## CLI
 
