@@ -19,7 +19,7 @@ blessed reference. It is complementary to the determinism gate:
 
 It **does not** prove model validity or market performance. The golden baseline is
 **synthetic-only and not market evidence**. Baseline updates must be **explicit and
-reviewed** (`--update-baseline`); they never happen silently. Secrets are never
+reviewed**; the official fixture requires an approved promotion and ledger. Secrets are never
 captured; provenance manifests (`audit_manifest.*`, `artifact_manifest.*`) and the
 run-narrative `pipeline_summary.*` are excluded by default because they are
 intentionally run/commit-specific.
@@ -60,10 +60,9 @@ python -m jp_stock_analysis.cli check-pipeline-regression --synthetic \
     --fail-on-regression --output-dir out/
 # -> pipeline_regression_report.{json,md}; exits nonzero on a regression
 
-# intentionally refresh the golden baseline (review the diff before committing)
+# Generate a research-only candidate; do not write the official fixture here.
 python -m jp_stock_analysis.cli check-pipeline-regression --synthetic \
-    --update-baseline --baseline-path tests/fixtures/pipeline_baseline/golden_pipeline_baseline.json \
-    --output-dir out/
+    --update-baseline --baseline-path /tmp/candidate-baseline.json --output-dir /tmp/candidate-run
 ```
 
 Options: `--baseline-path`, `--run-id` (default `golden`), `--fixed-timestamp`
@@ -81,9 +80,11 @@ so the hook never causes a self-referential regression.
 
 ## Updating the baseline intentionally
 
-A baseline update is a reviewed action: run with `--update-baseline`, inspect the
-written `golden_pipeline_baseline.json` diff in code review, and commit it
-deliberately. Never update it to silence an unexplained regression.
+The official fixture requires an explicitly approved promotion with a reviewer
+note and its matching ledger. Direct `--update-baseline` writes to it are refused.
+Inspect the candidate and the semantic change before approval; never update it
+merely to silence an unexplained regression. Temporary research baselines remain
+available through `--update-baseline`.
 
 ## Comparing arbitrary runs & promoting a new baseline
 

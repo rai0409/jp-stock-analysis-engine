@@ -27,7 +27,7 @@
     "pipeline_summary.json",
     "pipeline_summary.md"
   ],
-  "artifact_count": 28,
+  "artifact_count": 32,
   "artifacts": [
     {
       "relative_path": "constraints/constrained_portfolio.json",
@@ -50,8 +50,8 @@
     {
       "relative_path": "dataset/modeling_dataset.csv",
       "artifact_type": "csv",
-      "raw_sha256": "0fc6159794d2da8efb417c82b7ff6d00ed0f407bd02882657740c2afff5a3863",
-      "canonical_sha256": "0fc6159794d2da8efb417c82b7ff6d00ed0f407bd02882657740c2afff5a3863",
+      "raw_sha256": "6b58c0b2a7e0b329923000ea05e5f8269d8e82999d466d6d15a2bfa57a56d8cf",
+      "canonical_sha256": "6b58c0b2a7e0b329923000ea05e5f8269d8e82999d466d6d15a2bfa57a56d8cf",
       "line_count": 37,
       "columns": [
         "ticker",
@@ -94,14 +94,16 @@
     {
       "relative_path": "dataset/modeling_dataset_summary.json",
       "artifact_type": "json",
-      "raw_sha256": "d77f17dd60e9d2268b27581bee31334b88cffe9fb71b43fe43106568feaa893c",
-      "canonical_sha256": "90f7dbbb1361c16bc698c0f539b4757e9f816f0e82d5354ac48688551ee4e92a",
+      "raw_sha256": "75164121fe607c2c5969d39c75f5b21f3b662720f5342268d2e4e4859a9e48b4",
+      "canonical_sha256": "418a84da0cc15064eb728c8fce7c6a313c38e9ea124d687ebe5ac619c23db101",
       "json_top_level_keys": [
         "accounting_basis_distribution",
         "decision_dates",
         "disclaimer",
         "eligible_observations",
+        "entry",
         "exclusions",
+        "feature_count",
         "feature_coverage",
         "horizons",
         "is_synthetic",
@@ -113,8 +115,8 @@
     {
       "relative_path": "ensemble/ensemble.json",
       "artifact_type": "json",
-      "raw_sha256": "66c9a15cff27d39eba294e9ce66df496a2bcd9d5c6bf28c1bdd9fb009d37a04d",
-      "canonical_sha256": "599bcd88689664000f78a17dddd67c69600328b605004cfe465bf0c762917b70",
+      "raw_sha256": "a57c064b79cd0cf68e0673cf3f6339b78d87f1737bc5eda778393792bbdf3129",
+      "canonical_sha256": "0417a4a928dcceccdffd60f9cc693b22101f654ee55724e9873e711bd5550699",
       "json_top_level_keys": [
         "rank_average",
         "weighted_blend"
@@ -123,18 +125,19 @@
     {
       "relative_path": "feature_importance/feature_importance.json",
       "artifact_type": "json",
-      "raw_sha256": "1373da5a139c2fe24d24733adfc03d08c6a9d53f10b804cb75bc9debeedb92b0",
-      "canonical_sha256": "80c9dabd7c86ae3059d6b896963c40b7818e37b34c10a2e4a05843d0ec764c92",
+      "raw_sha256": "73a818c4a84473f515e8a73b0512acfe53429c15e5191506dd711f48a9e0ffef",
+      "canonical_sha256": "799547bc817645ef106126383a3d7baea255967b0506654014d02a842582565c",
       "json_top_level_keys": [
         "coefficient",
-        "permutation"
+        "permutation",
+        "scope"
       ]
     },
     {
       "relative_path": "linear/elastic_net/model_metadata.json",
       "artifact_type": "json",
-      "raw_sha256": "673a599fb5384ab3c4b9650a1b4c824695e142de92ded2425f6ba29ab9c6ae4f",
-      "canonical_sha256": "6affbf265e23a13f734f20d93275fb1809d00d4160d1992b3010014521f2126e",
+      "raw_sha256": "bb4def2320c42d941d310c46124061b189bce7c1b979ba53194c26394d45b087",
+      "canonical_sha256": "075d2a46a9a6c2908912ca91f72a4f0789cd2242c8a4a5d4fa56012577a751e6",
       "json_top_level_keys": [
         "alpha",
         "coefficients",
@@ -165,23 +168,37 @@
       ]
     },
     {
+      "relative_path": "linear/elastic_net/oos_validation.json",
+      "artifact_type": "json",
+      "raw_sha256": "c687a7469773362f805f605786b0d825dff461f8dde978731c6e57e6ed6e5925",
+      "canonical_sha256": "0c5aeeeb6a7e3d9876bf5da406dca18441f6503b9000627bd215ee04b664403e",
+      "json_top_level_keys": [
+        "folds",
+        "horizon",
+        "message",
+        "oos_scored_count",
+        "status",
+        "validation"
+      ]
+    },
+    {
       "relative_path": "linear/elastic_net/predictions.csv",
       "artifact_type": "csv",
-      "raw_sha256": "2f7d333ea208dcc4ac6f64aecf6d1b2d97f57711ce32dfb73e727d65445a515c",
-      "canonical_sha256": "2f7d333ea208dcc4ac6f64aecf6d1b2d97f57711ce32dfb73e727d65445a515c",
-      "line_count": 34,
+      "raw_sha256": "0bd89107389a272e0871476842daa1f09dedb010cd2e06cd7949237df72f2be8",
+      "canonical_sha256": "0bd89107389a272e0871476842daa1f09dedb010cd2e06cd7949237df72f2be8",
+      "line_count": 23,
       "columns": [
         "ticker",
         "decision_date",
-        "prediction"
+        "oos_prediction"
       ],
-      "row_count": 33
+      "row_count": 22
     },
     {
       "relative_path": "linear/ridge/model_metadata.json",
       "artifact_type": "json",
-      "raw_sha256": "1f29fdda312a928b7b22d5ec9469a595beb8612a7a47c69c33b7939129f162a3",
-      "canonical_sha256": "90a92c50aab8616c2764ca16a628587e1293b3ca9308b75036de547b2556adcb",
+      "raw_sha256": "788560e8a12746f30070b53373ee5022ef8255eccc893472041796496ce5c8af",
+      "canonical_sha256": "c820570dbfe35f29c0e38d52362383092945a3605fb10a72320f35d49ea4ebf2",
       "json_top_level_keys": [
         "alpha",
         "coefficients",
@@ -204,23 +221,37 @@
       ]
     },
     {
+      "relative_path": "linear/ridge/oos_validation.json",
+      "artifact_type": "json",
+      "raw_sha256": "c687a7469773362f805f605786b0d825dff461f8dde978731c6e57e6ed6e5925",
+      "canonical_sha256": "0c5aeeeb6a7e3d9876bf5da406dca18441f6503b9000627bd215ee04b664403e",
+      "json_top_level_keys": [
+        "folds",
+        "horizon",
+        "message",
+        "oos_scored_count",
+        "status",
+        "validation"
+      ]
+    },
+    {
       "relative_path": "linear/ridge/predictions.csv",
       "artifact_type": "csv",
-      "raw_sha256": "93d8e82d653ac9d043f2b688d85f1d8bb5c6c9fe7a1a4d110b856ee97f96b4ff",
-      "canonical_sha256": "93d8e82d653ac9d043f2b688d85f1d8bb5c6c9fe7a1a4d110b856ee97f96b4ff",
-      "line_count": 34,
+      "raw_sha256": "be6c6e7c4d038c4f9dd412d77ad54f7158e1aa9a647ecf0996c5ced6e82130ff",
+      "canonical_sha256": "be6c6e7c4d038c4f9dd412d77ad54f7158e1aa9a647ecf0996c5ced6e82130ff",
+      "line_count": 23,
       "columns": [
         "ticker",
         "decision_date",
-        "prediction"
+        "oos_prediction"
       ],
-      "row_count": 33
+      "row_count": 22
     },
     {
       "relative_path": "modeling_report.json",
       "artifact_type": "json",
-      "raw_sha256": "b20398725a703c01bd13f1d7a27943c0768a9446e63b2745823078967615f3d9",
-      "canonical_sha256": "8b016b5357e893355a01ccb229fff65ad411850d8f7eae5392aa9a7d2a948450",
+      "raw_sha256": "73f665f59feb5857babb8952b6e1d06275f0c03d5a0334918f60a83a2ae5cd3b",
+      "canonical_sha256": "2b79ab52ac7871cbae769cca22696d20ce3c5846e8a9a0e929bc6189eeeeced9",
       "json_top_level_keys": [
         "commercial_validation",
         "data_coverage",
@@ -234,6 +265,7 @@
         "no_look_ahead_status",
         "optional_backends",
         "portfolio_long_short",
+        "primary_model",
         "ranking_by_horizon",
         "synthetic",
         "synthetic_warning",
@@ -243,15 +275,15 @@
     {
       "relative_path": "modeling_report.md",
       "artifact_type": "md",
-      "raw_sha256": "7ce3133afe2664225c36e565a36e36d30712b4b3e75df857ae3b1453f90a726f",
-      "canonical_sha256": "7ce3133afe2664225c36e565a36e36d30712b4b3e75df857ae3b1453f90a726f",
-      "line_count": 105
+      "raw_sha256": "645943c231e975c47636adf15444a40f9dffda962249da44e535882c5e49006b",
+      "canonical_sha256": "645943c231e975c47636adf15444a40f9dffda962249da44e535882c5e49006b",
+      "line_count": 102
     },
     {
       "relative_path": "monitoring/monitoring.csv",
       "artifact_type": "csv",
-      "raw_sha256": "28ec58a0c153ad45ee2ef7e7f4d73f2ffad099d4ac12b43850ea7cf56b3e2608",
-      "canonical_sha256": "28ec58a0c153ad45ee2ef7e7f4d73f2ffad099d4ac12b43850ea7cf56b3e2608",
+      "raw_sha256": "e4bf205018f32f0f50a6a3aad6fe5ba523d6936c9e64e3ceca4efa1c055586d4",
+      "canonical_sha256": "e4bf205018f32f0f50a6a3aad6fe5ba523d6936c9e64e3ceca4efa1c055586d4",
       "line_count": 4,
       "columns": [
         "metric",
@@ -268,8 +300,8 @@
     {
       "relative_path": "monitoring/monitoring.json",
       "artifact_type": "json",
-      "raw_sha256": "30b28dd77082ec244705e533726edf8a547927a32b4aa972d3d2138f64621436",
-      "canonical_sha256": "ecdb92569edc2a96dde47b7e68ee00177f72daa3c46726ec6f66139c22570ba8",
+      "raw_sha256": "69c84ccbd7b07b731b7ea6bc58341c53c5767ea88e57985a0e6e0d50a636e1b5",
+      "canonical_sha256": "c251c82684f32de70c847f2d97d15ae85630bb8220e23d587e5f4e0a46672e2b",
       "json_top_level_keys": [
         "disclaimer",
         "is_synthetic",
@@ -284,8 +316,8 @@
     {
       "relative_path": "monitoring/monitoring.md",
       "artifact_type": "md",
-      "raw_sha256": "9442c3cac1f942050643f10404487b2b20bc7c48f02d63f00ea5dcf8d9c8d726",
-      "canonical_sha256": "9442c3cac1f942050643f10404487b2b20bc7c48f02d63f00ea5dcf8d9c8d726",
+      "raw_sha256": "4b596699470e27f6688c001b599a8dcab1387f787666ddcf9a5f839f48a25d5b",
+      "canonical_sha256": "4b596699470e27f6688c001b599a8dcab1387f787666ddcf9a5f839f48a25d5b",
       "line_count": 14
     },
     {
@@ -303,8 +335,8 @@
     {
       "relative_path": "neutralization/neutralized_metrics.json",
       "artifact_type": "json",
-      "raw_sha256": "669f9a94de8f39dc71a1221ab524aecd2c9462a184b0aafdccee5275dc92cdda",
-      "canonical_sha256": "79628029e34cb514369d7926421708bdb029ba410893315739de1ec5f1430ada",
+      "raw_sha256": "42f2db4ae785de82224ebbb572816bb5ca53f0a18cde0e8f389ba77c4a3168d1",
+      "canonical_sha256": "df7be48ff0d817602c0b4833070e3007b16aa550a0a804e369b474f0dc66c0c0",
       "json_top_level_keys": [
         "disclaimer",
         "exposure_columns",
@@ -325,14 +357,14 @@
       ],
       "headline_metrics": {
         "neutralized_ic_mean": -0.2636363636363636,
-        "raw_ic_mean": -0.06666666666666667
+        "raw_ic_mean": -0.07575757575757575
       }
     },
     {
       "relative_path": "neutralization/neutralized_metrics.md",
       "artifact_type": "md",
-      "raw_sha256": "6efbd518a62f3374adc32d1390652d51706478c86a7c501ba8a17f79175c376e",
-      "canonical_sha256": "6efbd518a62f3374adc32d1390652d51706478c86a7c501ba8a17f79175c376e",
+      "raw_sha256": "0a40782b840108c4f63ecd42fb75d053b30f31818f3b5adaa314cbf70a6df05c",
+      "canonical_sha256": "0a40782b840108c4f63ecd42fb75d053b30f31818f3b5adaa314cbf70a6df05c",
       "line_count": 14
     },
     {
@@ -356,8 +388,8 @@
     {
       "relative_path": "portfolio/portfolio_metrics.json",
       "artifact_type": "json",
-      "raw_sha256": "4f906c9771e7c05f779ed4d1d0811113b776702f55ddc1778ecee956450b7ddf",
-      "canonical_sha256": "a2217b19c2fb06081afd521757ddbc32c7308edcdbe68926bcb12548e28c1a9a",
+      "raw_sha256": "25b7da8e91d7857cc0f5115e7ac3b8867a266893eb20fc46f885842b73512017",
+      "canonical_sha256": "9c9c21cfb400a25e6f985bd80aa7290a57a59ac150019e5e65ad8a4164cafab9",
       "json_top_level_keys": [
         "commercial_validation",
         "config",
@@ -387,10 +419,41 @@
       "line_count": 17
     },
     {
+      "relative_path": "primary/predictions.csv",
+      "artifact_type": "csv",
+      "raw_sha256": "a2d32c0bbe1df72df387f2644bf1ef236d319b5b4b975b753939ab0841a65699",
+      "canonical_sha256": "a2d32c0bbe1df72df387f2644bf1ef236d319b5b4b975b753939ab0841a65699",
+      "line_count": 34,
+      "columns": [
+        "ticker",
+        "decision_date",
+        "oos_score"
+      ],
+      "row_count": 33
+    },
+    {
+      "relative_path": "primary/primary_model.json",
+      "artifact_type": "json",
+      "raw_sha256": "32ea73cfcf03bdd549bd9fa40fda204739419109248421e01d565aa02e435c4f",
+      "canonical_sha256": "89d631c8f3b02d3d39f0fd387df8e483e78d33f53c46292118fae0b81ab3cf01",
+      "json_top_level_keys": [
+        "disclaimer",
+        "ensemble_diversity",
+        "fallback_used",
+        "horizon",
+        "members",
+        "model_label",
+        "scored_count",
+        "scored_dates",
+        "validation",
+        "warnings"
+      ]
+    },
+    {
       "relative_path": "ranking/ranking_metrics.csv",
       "artifact_type": "csv",
-      "raw_sha256": "9de7dcaa757d9c30003c3e9a734e108ba14c8927323680b8ebf6067bd153e241",
-      "canonical_sha256": "9de7dcaa757d9c30003c3e9a734e108ba14c8927323680b8ebf6067bd153e241",
+      "raw_sha256": "f65169fd57270e2ae16f6b6a93c609965bbe34fed6989fc3210d6403a23c6d9d",
+      "canonical_sha256": "f65169fd57270e2ae16f6b6a93c609965bbe34fed6989fc3210d6403a23c6d9d",
       "line_count": 4,
       "columns": [
         "horizon",
@@ -409,8 +472,8 @@
     {
       "relative_path": "ranking/ranking_metrics.json",
       "artifact_type": "json",
-      "raw_sha256": "05c138ca97d526cc4d0bb8a6bfe4666d20f5cc4069238e45a3a192cf46dd427c",
-      "canonical_sha256": "49c25aebe1a7dc4a80c7f088a938d14bd12805b55a0c259e645a9dbdac1ea952",
+      "raw_sha256": "3d5e1af9605de5e3787c0f34ef08de2be0c3f92f9904ba0b03d690d880645386",
+      "canonical_sha256": "ca6d509b16dfedf27a4b89612f4cc532f9246e7b2b073275856dd0e0786318e3",
       "json_top_level_keys": [
         "disclaimer",
         "grade_dispersion",
@@ -421,16 +484,16 @@
         "synthetic_warning"
       ],
       "headline_metrics": {
-        "horizons.0.ic_mean": -0.06666666666666667,
-        "horizons.0.icir": -0.10600963242025328,
+        "horizons.0.ic_mean": -0.07575757575757575,
+        "horizons.0.icir": -0.1175654016017206,
         "horizons.0.coverage_count": 33
       }
     },
     {
       "relative_path": "ranking/ranking_metrics.md",
       "artifact_type": "md",
-      "raw_sha256": "a388c465b4b5a2659850a3a5b8e6308bcba711e08f5273ca30796ad310e240f5",
-      "canonical_sha256": "a388c465b4b5a2659850a3a5b8e6308bcba711e08f5273ca30796ad310e240f5",
+      "raw_sha256": "d7caa37c5eb995772e3b1a76f6ee7290886d88e46e68f1d594fab5812ade07f2",
+      "canonical_sha256": "d7caa37c5eb995772e3b1a76f6ee7290886d88e46e68f1d594fab5812ade07f2",
       "line_count": 15
     },
     {
@@ -464,8 +527,8 @@
     {
       "relative_path": "stability/model_stability.csv",
       "artifact_type": "csv",
-      "raw_sha256": "5ae3480c0c2bb9e16578a579a0e30d876ccd55e28c699b6d7d92c259146cd58b",
-      "canonical_sha256": "5ae3480c0c2bb9e16578a579a0e30d876ccd55e28c699b6d7d92c259146cd58b",
+      "raw_sha256": "88db54dffd41149c4b3699f7f012ac39849047cfea7f96cc3a57192fd3f8bd35",
+      "canonical_sha256": "88db54dffd41149c4b3699f7f012ac39849047cfea7f96cc3a57192fd3f8bd35",
       "line_count": 5,
       "columns": [
         "metric",
@@ -483,8 +546,8 @@
     {
       "relative_path": "stability/model_stability.json",
       "artifact_type": "json",
-      "raw_sha256": "aab6aee94924364b613603bcb8d4dc99360ce9a3369762100b5bbe807f9c5b8b",
-      "canonical_sha256": "df651ca4d3dd37912e42281be5d9121bc525f94b06ddbce0bfb407be34ddfd42",
+      "raw_sha256": "2262666f1a218b8eecacc47eab5666d19d87ae3f425fc9be2c6b26a0716735e0",
+      "canonical_sha256": "a88c10b883a0572525d56438ad09e382d8cd384e14da9037165415c879fbc19f",
       "json_top_level_keys": [
         "disclaimer",
         "fold_stability",
@@ -503,8 +566,8 @@
     {
       "relative_path": "stability/model_stability.md",
       "artifact_type": "md",
-      "raw_sha256": "e0c3a7d8bf1c4d3b568447ce8622095fae09241104e6124077902b4d805feb68",
-      "canonical_sha256": "e0c3a7d8bf1c4d3b568447ce8622095fae09241104e6124077902b4d805feb68",
+      "raw_sha256": "2e7630b3120c2dc5b63e2b7fab8a567072b9eb2e0289dc460268da67f3aa551d",
+      "canonical_sha256": "2e7630b3120c2dc5b63e2b7fab8a567072b9eb2e0289dc460268da67f3aa551d",
       "line_count": 17
     }
   ]

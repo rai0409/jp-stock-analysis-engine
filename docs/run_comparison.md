@@ -56,8 +56,8 @@ python -m jp_stock_analysis.cli compare-pipeline-runs \
 Promotion is explicit and auditable. It **never** promotes silently and **never**
 overwrites the baseline without approval:
 
-- `--require-approval` set and `--approve` missing → **blocked** (`baseline NOT
-  updated`), exits nonzero.
+- `--approve` is required even when `--require-approval` is omitted.
+- The official baseline also requires its matching ledger and a non-empty note.
 - a non-empty `--reviewer-note` is required.
 - when approved, it captures a new canonical baseline from the run, writes it to
   `--baseline-path`, and writes `baseline_promotion_record.{json,md}`.
@@ -91,3 +91,15 @@ review and commit them deliberately.
 
 All are reproducibility / change-detection / auditability tools — none is a
 model-validity or performance check.
+
+## Transaction recovery
+
+Ledger-backed promotion uses cooperative local file locks and a durable journal.
+If promotion reports recovery required, stop further updates. Preserve both
+`.promotion-journal` files and inspect the recorded old and new fingerprints.
+After confirming the pair belongs to the intended transaction, call
+`jp_stock_analysis.modeling.baseline_transaction.recover(baseline, ledger)`
+with `Path` arguments. Recovery restores the verified prior state only when both
+current files match an expected old or new fingerprint. Unknown or damaged
+states require manual investigation; never delete the journal to bypass checks.
+This protects cooperating local processes, not arbitrary external writes.

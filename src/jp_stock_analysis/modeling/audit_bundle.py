@@ -297,6 +297,28 @@ def export_audit_bundle(
 
     baseline_src = Path(baseline_path)
     ledger_src = Path(ledger_path)
+    from jp_stock_analysis.modeling.baseline_transaction import (
+        official_baseline,
+        official_ledger,
+        snapshot,
+        validate_pair,
+    )
+
+    baseline_managed = official_baseline(baseline_src)
+    ledger_managed = official_ledger(ledger_src)
+    if baseline_managed != ledger_managed:
+        raise ValueError("official baseline and ledger must be used together")
+    validate_pair(baseline_src, ledger_src)
+    baseline_bytes, ledger_bytes = snapshot(
+        baseline_src, ledger_src, strict=baseline_managed,
+    )
+    baseline_target = out / "baseline/golden_pipeline_baseline.json"
+    ledger_target = out / "ledger/baseline_history.jsonl"
+    baseline_target.parent.mkdir(parents=True, exist_ok=True)
+    ledger_target.parent.mkdir(parents=True, exist_ok=True)
+    baseline_target.write_bytes(baseline_bytes)
+    ledger_target.write_bytes(ledger_bytes)
+    baseline_src, ledger_src = baseline_target, ledger_target
     _add_file(
         copied,
         bundle_dir=out,
@@ -351,7 +373,7 @@ def export_audit_bundle(
             )
             report = compare_to_baseline(
                 run_dir,
-                _read_json(baseline_src),
+                _read_json(out / "baseline/golden_pipeline_baseline.json"),
                 run_id=GOLDEN_RUN_ID,
                 fixed_timestamp=GOLDEN_TIMESTAMP,
             )

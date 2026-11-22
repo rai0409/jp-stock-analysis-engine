@@ -102,7 +102,16 @@ def run_golden_synthetic_pipeline(
     run_pipeline(
         dataset, bundle.prices, output_dir=output_dir, run_id=run_id,
         fixed_timestamp=fixed_timestamp, disclosure_date=bundle.bundle_disclosure_date,
-        config=PipelineConfig(transaction_cost_bps=10.0, max_weight_per_name=0.34),
+        # Environment-independent golden: the primary model and the report's
+        # model comparison use only core dependencies (no optional GBDT backend),
+        # so the baseline is identical with or without lightgbm/catboost and
+        # across their versions. The GBDT path is covered by dedicated tests.
+        config=PipelineConfig(
+            transaction_cost_bps=10.0,
+            max_weight_per_name=0.34,
+            primary_model="baseline_factor_ranker",
+            report_optional_models=False,
+        ),
     )
     return Path(output_dir) / run_id
 
@@ -224,14 +233,37 @@ def capture_baseline(
 
 
 def write_baseline(baseline: Mapping[str, Any], path: str | Path) -> Path:
+    from jp_stock_analysis.modeling.baseline_transaction import (
+        check_clear,
+        locked,
+        official_baseline,
+    )
+
     out = Path(path)
+    if official_baseline(out):
+        raise ValueError("official baseline requires approved transactional promotion")
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(baseline, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    with locked(out):
+        check_clear(out)
+        out.write_text(json.dumps(baseline, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return out
 
 
 def load_baseline(path: str | Path) -> dict[str, Any]:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    from jp_stock_analysis.modeling.baseline_transaction import (
+        corresponding_ledger,
+        official_baseline,
+        snapshot,
+    )
+
+    if official_baseline(path):
+        baseline, _ = snapshot(Path(path), corresponding_ledger(path))
+        return json.loads(baseline)
+    from jp_stock_analysis.modeling.baseline_transaction import check_clear, locked
+
+    with locked(Path(path)):
+        check_clear(Path(path))
+        return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 def _diff_details(

@@ -81,6 +81,8 @@ RISK_KEYWORDS: tuple[str, ...] = (
 
 _MOMENTUM_WINDOWS = {"momentum_20d": 20, "momentum_60d": 60, "momentum_120d": 120}
 _TRADING_DAYS_PER_YEAR = 252
+_VOLATILITY_WINDOW = 60  # trading days of returns used for realised volatility
+_DRAWDOWN_WINDOW = 252  # trading days used for max drawdown (one year)
 
 
 def _safe_div(numerator: float | None, denominator: float | None) -> float | None:
@@ -196,9 +198,12 @@ def compute_factors(
 
     ordered_bars = sorted(bars, key=lambda b: b.date) if bars else []
     series = _adjusted_series(ordered_bars) if ordered_bars else []
+    # Valuation must pair the *unadjusted* close with the as-reported share
+    # count. Split-adjusted closes are rescaled retroactively, so adjusted price
+    # x reported shares mis-states market cap by the split ratio.
     price = market_price
-    if price is None and series:
-        price = series[-1]
+    if price is None and ordered_bars:
+        price = float(ordered_bars[-1].close)
 
     # ----- value (need a price and per-share / aggregate equity data) -----
     market_cap: float | None = None
@@ -243,8 +248,11 @@ def compute_factors(
     if series:
         for name, window in _MOMENTUM_WINDOWS.items():
             features[name] = _momentum(series, window)
-        features["volatility"] = _volatility(series)
-        features["max_drawdown"] = _max_drawdown(series)
+        # Fixed look-back windows so the risk factors are comparable across
+        # tickers with different listing histories (full-history volatility /
+        # drawdown is non-stationary and length-dependent).
+        features["volatility"] = _volatility(series[-(_VOLATILITY_WINDOW + 1) :])
+        features["max_drawdown"] = _max_drawdown(series[-(_DRAWDOWN_WINDOW + 1) :])
 
     # ----- disclosure placeholders -----
     features.update(_narrative_features(narrative))

@@ -83,12 +83,14 @@ from jp_stock_analysis.modeling.determinism import (
     compare_artifact_trees,
     write_determinism_report,
 )
-from jp_stock_analysis.modeling.factors import ALL_FACTORS
 from jp_stock_analysis.modeling.feature_importance import (
     coefficient_importance,
     permutation_importance,
 )
-from jp_stock_analysis.modeling.fixtures import build_synthetic_bundle
+from jp_stock_analysis.modeling.fixtures import (
+    build_rich_synthetic_bundle,
+    build_synthetic_bundle,
+)
 from jp_stock_analysis.modeling.linear_models import ElasticNetRanker, RidgeRanker
 from jp_stock_analysis.modeling.ml_models import MODEL_TYPES, train_ranking_model
 from jp_stock_analysis.modeling.monitoring import (
@@ -100,6 +102,7 @@ from jp_stock_analysis.modeling.neutralization import (
     neutralized_rank_ic,
     write_neutralized_outputs,
 )
+from jp_stock_analysis.modeling.out_of_sample import linear_walk_forward_oos
 from jp_stock_analysis.modeling.pipeline import PipelineConfig, run_pipeline
 from jp_stock_analysis.modeling.portfolio_metrics import (
     evaluate_portfolio,
@@ -140,10 +143,13 @@ from jp_stock_analysis.modeling.walk_forward import (
     write_walk_forward_outputs,
 )
 from jp_stock_analysis.providers.jquants import JQuantsProvider
+from jp_stock_analysis.providers.listing_status import load_listing_status
 from jp_stock_analysis.providers.local_csv import (
     load_company_metadata_csv,
     load_disclosure_texts,
+    load_earnings_calendar_csv,
     load_fundamentals_csv,
+    load_margin_csv,
     load_prices_csv,
 )
 from jp_stock_analysis.providers.topix1000_export import Topix1000ExportProvider
@@ -1006,13 +1012,61 @@ def _add_pipeline_config_args(sub: argparse.ArgumentParser) -> None:
     sub.add_argument("--portfolio-top-quantile", default=0.2, type=float)
     sub.add_argument("--portfolio-bottom-quantile", default=0.2, type=float)
     sub.add_argument("--portfolio-rank-weighted", action="store_true")
-    sub.add_argument("--transaction-cost-bps", default=0.0, type=float)
+    # one-way cost per unit turnover; matches PipelineConfig's 10 bps default
+    sub.add_argument("--transaction-cost-bps", default=10.0, type=float)
     sub.add_argument("--max-weight-per-name", default=None, type=float)
     sub.add_argument("--max-sector-weight", default=None, type=float)
     sub.add_argument("--max-participation-rate", default=None, type=float)
     sub.add_argument("--min-adv", default=None, type=float)
     sub.add_argument("--monitoring-window", default=3, type=int)
     sub.add_argument("--monitoring-threshold", default=2.0, type=float)
+    sub.add_argument(
+        "--primary-model",
+        default="tree_ensemble",
+        help="adopted model driving ranking/portfolio steps: tree_ensemble (default; "
+        "OOS LightGBM+CatBoost+Ridge), baseline_factor_ranker, or a single model type",
+    )
+    sub.add_argument(
+        "--tree-members",
+        default="lightgbm_regressor,catboost_regressor",
+        help="comma-separated GBDT members of the tree_ensemble",
+    )
+    sub.add_argument(
+        "--refit-every", default=1, type=int,
+        help="refit models every N decision dates (1 = every date; 4 on weekly "
+        "decision dates = monthly refits)",
+    )
+    sub.add_argument(
+        "--tree-n-jobs", default=1, type=int,
+        help="GBDT threads for the primary model (-1 = all cores; reproducible)",
+    )
+    sub.add_argument(
+        "--no-ridge-in-primary",
+        action="store_true",
+        help="exclude the OOS Ridge anchor from the tree_ensemble",
+    )
+    sub.add_argument(
+        "--research-transformers",
+        action="store_true",
+        help="ON/OFF switch (default OFF): also run research-only transformer models "
+        "(requires the 'research-transformers' extra / torch); never drives the "
+        "primary ranking",
+    )
+    sub.add_argument(
+        "--research-transformer-models",
+        default="tft,gru,cross_sectional_transformer",
+        help="comma-separated research models: tft, gru, cross_sectional_transformer",
+    )
+    sub.add_argument(
+        "--research-preset",
+        default="cpu_small",
+        choices=("cpu_test", "cpu_small", "gpu_4060"),
+        help="hyper-parameter preset for the research models (gpu_4060 = RTX 4060 8GB)",
+    )
+    sub.add_argument(
+        "--research-device", default=None, choices=("cpu", "cuda", "auto"),
+        help="override the preset's device",
+    )
 
 
 def _pipeline_config_from_args(args: argparse.Namespace) -> PipelineConfig:
@@ -1033,6 +1087,17 @@ def _pipeline_config_from_args(args: argparse.Namespace) -> PipelineConfig:
         min_adv=args.min_adv,
         monitoring_window=args.monitoring_window,
         monitoring_threshold=args.monitoring_threshold,
+        primary_model=args.primary_model,
+        tree_members=tuple(m.strip() for m in args.tree_members.split(",") if m.strip()),
+        include_ridge_in_primary=not args.no_ridge_in_primary,
+        refit_every_periods=args.refit_every,
+        tree_n_jobs=args.tree_n_jobs,
+        research_transformers=args.research_transformers,
+        research_transformer_models=tuple(
+            m.strip() for m in args.research_transformer_models.split(",") if m.strip()
+        ),
+        research_preset=args.research_preset,
+        research_device=args.research_device,
     )
 
 
@@ -1452,12 +1517,98 @@ def _add_modeling_input_args(sub: argparse.ArgumentParser) -> None:
     sub.add_argument(
         "--n-quantiles", default=5, type=int, help="quantile buckets (default 5)"
     )
+    sub.add_argument(
+        "--synthetic-rich",
+        action="store_true",
+        help="use the rich synthetic fixture (OHLC + guidance + earnings calendar + "
+        "margin; 24 tickers, 10 decision dates). SYNTHETIC ONLY",
+    )
+    sub.add_argument(
+        "--feature-set",
+        default="core",
+        choices=("core", "extended"),
+        help="core = 18 factors (default); extended = + ~40 trading features "
+        "(candles, liquidity, guidance, events, margin, beta)",
+    )
+    sub.add_argument(
+        "--entry",
+        default="next_close",
+        choices=("next_close", "next_open"),
+        help="label convention: next_close (legacy) or next_open (buy next open, "
+        "sell the open h sessions later — tradable fills)",
+    )
+    sub.add_argument(
+        "--min-traded-value",
+        default=None,
+        type=float,
+        help="exclude names whose 20-day mean traded value (yen) is below this",
+    )
+    sub.add_argument(
+        "--earnings-calendar", default=None, help="scheduled earnings dates CSV (ticker,date)"
+    )
+    sub.add_argument(
+        "--listing-status",
+        default=None,
+        help="survivorship control: comma-separated CSV/Excel files or directories "
+        "with listing/delisting records (ticker, listing_date, delisting_date, "
+        "delisting_reason, final_price, delisting_return_pct); later files override",
+    )
+    sub.add_argument(
+        "--delisting-penalty-pct",
+        default=None,
+        type=float,
+        help="optional return (percent, e.g. -30) applied at a delisting with no "
+        "final_price/delisting_return in the source. Off by default (exit at the "
+        "last real trade); recorded in the dataset summary when used",
+    )
+    sub.add_argument(
+        "--margin", default=None,
+        help="weekly margin balance CSV (ticker,date,long_balance,short_balance"
+        "[,published_date])",
+    )
     sub.add_argument("--output-dir", required=True, help="directory for outputs")
 
 
 def _load_modeling_dataset(args: argparse.Namespace):
     """Build a ModelingDataset + prices from --synthetic or file inputs."""
     horizons = _parse_horizons(args.horizons)
+    listing_status = (
+        load_listing_status([p.strip() for p in args.listing_status.split(",") if p.strip()])
+        if getattr(args, "listing_status", None)
+        else None
+    )
+    delisting_penalty_pct = getattr(args, "delisting_penalty_pct", None)
+    feature_set = getattr(args, "feature_set", "core")
+    entry = getattr(args, "entry", "next_close")
+    min_traded_value = getattr(args, "min_traded_value", None)
+    if getattr(args, "synthetic_rich", False):
+        rich = build_rich_synthetic_bundle()
+        dataset = build_modeling_dataset(
+            rich.fundamentals,
+            rich.prices,
+            rich.metadata,
+            decision_dates=rich.decision_dates,
+            horizons=[h for h in horizons if h in rich.horizons] or list(rich.horizons),
+            include_non_consolidated=args.include_non_consolidated,
+            is_synthetic=True,
+            feature_set=feature_set,
+            entry=entry,
+            earnings_dates=rich.earnings_dates,
+            margin=rich.margin,
+            min_traded_value=min_traded_value,
+            listing_status=listing_status,
+            delisting_penalty_pct=delisting_penalty_pct,
+        )
+        # readiness anchor: the latest statement disclosure on/before the first
+        # decision date (statements themselves carry per-row PIT dates)
+        first_decision = min(rich.decision_dates)
+        anchor = max(
+            st.disclosure_date
+            for rows in rich.fundamentals.values()
+            for st in rows
+            if st.disclosure_date is not None and st.disclosure_date <= first_decision
+        )
+        return dataset, rich.prices, anchor
     if args.synthetic:
         bundle = build_synthetic_bundle()
         dataset = build_modeling_dataset(
@@ -1470,6 +1621,9 @@ def _load_modeling_dataset(args: argparse.Namespace):
             bundle_disclosure_date=bundle.bundle_disclosure_date,
             include_non_consolidated=args.include_non_consolidated,
             is_synthetic=True,
+            feature_set=feature_set,
+            entry=entry,
+            min_traded_value=min_traded_value,
         )
         return dataset, bundle.prices, bundle.bundle_disclosure_date
 
@@ -1510,6 +1664,17 @@ def _load_modeling_dataset(args: argparse.Namespace):
         bundle_disclosure_date=disclosure_date,
         include_non_consolidated=args.include_non_consolidated,
         is_synthetic=False,
+        feature_set=feature_set,
+        entry=entry,
+        earnings_dates=(
+            load_earnings_calendar_csv(args.earnings_calendar)
+            if getattr(args, "earnings_calendar", None)
+            else None
+        ),
+        margin=load_margin_csv(args.margin) if getattr(args, "margin", None) else None,
+        min_traded_value=min_traded_value,
+        listing_status=listing_status,
+        delisting_penalty_pct=delisting_penalty_pct,
     )
     return dataset, prices, disclosure_date
 
@@ -1571,9 +1736,13 @@ def _run_walk_forward_ranking(args: argparse.Namespace) -> int:
 
 def _run_train_ranking_model(args: argparse.Namespace) -> int:
     try:
-        dataset, _prices, _disclosure = _load_modeling_dataset(args)
+        dataset, prices, _disclosure = _load_modeling_dataset(args)
         result = train_ranking_model(
-            dataset, args.model_type, horizon=args.horizon, n_quantiles=args.n_quantiles
+            dataset,
+            args.model_type,
+            horizon=args.horizon,
+            n_quantiles=args.n_quantiles,
+            prices=prices,
         )
         out_dir = Path(args.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -1690,23 +1859,24 @@ def _run_evaluate_neutralized_ranking(args: argparse.Namespace) -> int:
 
 def _run_train_linear_ranking_model(args: argparse.Namespace) -> int:
     try:
-        dataset, _prices, _disclosure = _load_modeling_dataset(args)
+        dataset, prices, _disclosure = _load_modeling_dataset(args)
         label_key = f"forward_return_h{args.horizon}"
-        labelled = sorted(
-            (o for o in dataset.included() if o.labels.get(label_key) is not None),
-            key=lambda o: (o.decision_date, o.ticker),
-        )
-        if not labelled:
-            raise ValueError(f"no labelled observations at horizon {args.horizon}")
-        matrix = [[o.features.get(f) for f in ALL_FACTORS] for o in labelled]
-        target = [float(o.labels[label_key]) for o in labelled]
-        if args.linear_model_type == "ridge":
-            model = RidgeRanker(alpha=args.alpha)
-        else:
-            model = ElasticNetRanker(
+
+        def factory():
+            if args.linear_model_type == "ridge":
+                return RidgeRanker(alpha=args.alpha)
+            return ElasticNetRanker(
                 alpha=args.alpha, l1_ratio=args.l1_ratio, max_iter=args.max_iter, tol=args.tol
             )
-        predictions = model.fit_predict(matrix, target, list(ALL_FACTORS))
+
+        # Purged walk-forward: every prediction is out of sample.
+        run = linear_walk_forward_oos(dataset, args.horizon, factory, prices=prices)
+        if not run.result.ok or run.last_model is None:
+            raise ValueError(
+                f"no out-of-sample predictions at horizon {args.horizon}: "
+                f"{run.result.status} — {run.result.message}"
+            )
+        model = run.last_model
 
         out_dir = Path(args.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -1717,6 +1887,10 @@ def _run_train_linear_ranking_model(args: argparse.Namespace) -> int:
             _json.dumps(model.model_metadata, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+        (out_dir / "oos_validation.json").write_text(
+            _json.dumps(run.result.to_dict(), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
         with (out_dir / "coefficients.csv").open("w", encoding="utf-8", newline="") as handle:
             writer = _csv.writer(handle, lineterminator="\n")
             writer.writerow(["feature", "coefficient", "scaled_coefficient"])
@@ -1725,33 +1899,42 @@ def _run_train_linear_ranking_model(args: argparse.Namespace) -> int:
                 writer.writerow([feature, f"{coef:.8f}", f"{scaled.get(feature, 0.0):.8f}"])
         with (out_dir / "predictions.csv").open("w", encoding="utf-8", newline="") as handle:
             writer = _csv.writer(handle, lineterminator="\n")
-            writer.writerow(["ticker", "decision_date", "prediction", "forward_return"])
-            for obs, pred in zip(labelled, predictions, strict=True):
+            writer.writerow(["ticker", "decision_date", "oos_prediction", "forward_return"])
+            for scored in run.result.scored:
                 writer.writerow(
                     [
-                        obs.ticker,
-                        obs.decision_date.isoformat(),
-                        f"{pred:.8f}",
-                        obs.labels[label_key],
+                        scored.ticker,
+                        scored.decision_date.isoformat(),
+                        f"{scored.score:.8f}",
+                        scored.labels.get(label_key),
                     ]
                 )
 
         if args.feature_importance:
+            keep = [
+                i
+                for i, o in enumerate(run.last_test_rows)
+                if o.labels.get(label_key) is not None
+            ]
             coef_imp = coefficient_importance(
                 model.model_metadata["scaled_coefficients"], is_synthetic=dataset.is_synthetic
             )
             perm = permutation_importance(
                 model,
-                matrix,
-                list(ALL_FACTORS),
-                [o.decision_date for o in labelled],
-                [o.labels[label_key] for o in labelled],
+                [run.last_test_matrix[i] for i in keep],
+                list(dataset.feature_names),
+                [run.last_test_rows[i].decision_date for i in keep],
+                [run.last_test_rows[i].labels[label_key] for i in keep],
                 seed=0,
                 is_synthetic=dataset.is_synthetic,
             )
             (out_dir / "feature_importance.json").write_text(
                 _json.dumps(
-                    {"coefficient": coef_imp.to_dict(), "permutation": perm.to_dict()},
+                    {
+                        "scope": "last walk-forward fold; permutation on held-out OOS rows",
+                        "coefficient": coef_imp.to_dict(),
+                        "permutation": perm.to_dict(),
+                    },
                     ensure_ascii=False,
                     indent=2,
                 )
@@ -1762,7 +1945,7 @@ def _run_train_linear_ranking_model(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(
-        f"Trained {args.linear_model_type}: status={model.status}. "
+        f"Trained {args.linear_model_type} (walk-forward OOS): status={model.status}. "
         f"Written to: {args.output_dir}"
     )
     return 0
@@ -2074,7 +2257,7 @@ def _run_promote_pipeline_baseline(args: argparse.Namespace) -> int:
         record, updated = promote_pipeline_baseline(
             args.from_run, args.baseline_path,
             reviewer_note=args.reviewer_note,
-            require_approval=args.require_approval,
+            require_approval=True,
             approved=args.approve,
             previous_baseline_path=args.previous_baseline_path,
             run_id=args.run_id,
@@ -2099,7 +2282,7 @@ def _run_promote_pipeline_baseline(args: argparse.Namespace) -> int:
         print(f"Baseline promoted.{ledger_note} Record: {paths['json_path']}")
         return 0
     print(
-        f"Promotion BLOCKED ({record['status']}); baseline NOT updated. "
+        f"Promotion BLOCKED ({record['status']}); check recovery status. "
         f"Record: {paths['json_path']}",
         file=sys.stderr,
     )
@@ -2333,7 +2516,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def main_fetch_jquants_daily_bars_incremental(argv: list[str] | None = None) -> int:
-    return main(["fetch-jquants-daily-bars-incremental", *(argv if argv is not None else sys.argv[1:])])
+    args = argv if argv is not None else sys.argv[1:]
+    return main(["fetch-jquants-daily-bars-incremental", *args])
 
 
 if __name__ == "__main__":

@@ -43,10 +43,15 @@ def _promotion_record(tmp_path: Path, fingerprint: str | None = None) -> Path:
 
 
 def _export(tmp_path: Path, **kwargs):
+    baseline = kwargs.pop("baseline_path", BASELINE)
+    ledger = kwargs.pop("ledger_path", LEDGER)
+    if baseline == BASELINE and ledger != LEDGER:
+        baseline = tmp_path / "research-baseline.json"
+        baseline.write_bytes(BASELINE.read_bytes())
     return export_audit_bundle(
         tmp_path / "bundle",
-        baseline_path=kwargs.pop("baseline_path", BASELINE),
-        ledger_path=kwargs.pop("ledger_path", LEDGER),
+        baseline_path=baseline,
+        ledger_path=ledger,
         synthetic=True,
         fixed_timestamp=GOLDEN_TIMESTAMP,
         bundle_id="bundle-fixed",

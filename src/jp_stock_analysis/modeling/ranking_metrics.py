@@ -141,6 +141,13 @@ class HorizonRankingMetrics:
     hit_rate_top_positive: float | None
     hit_rate_top_above_median: float | None
     n_quantiles: int
+    # Significance of the mean IC. ``ic_tstat`` assumes independent dates;
+    # ``ic_tstat_newey_west`` uses a HAC (Bartlett) standard error with
+    # ``newey_west_lag`` lags, which is the correct one when forward-return
+    # windows of consecutive decision dates overlap.
+    ic_tstat: float | None = None
+    ic_tstat_newey_west: float | None = None
+    newey_west_lag: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -159,6 +166,9 @@ class HorizonRankingMetrics:
             "hit_rate_top_positive": self.hit_rate_top_positive,
             "hit_rate_top_above_median": self.hit_rate_top_above_median,
             "n_quantiles": self.n_quantiles,
+            "ic_tstat": self.ic_tstat,
+            "ic_tstat_newey_west": self.ic_tstat_newey_west,
+            "newey_west_lag": self.newey_west_lag,
         }
 
 
@@ -171,6 +181,46 @@ def _std(values: Sequence[float]) -> float | None:
         return None
     mean = sum(values) / len(values)
     return math.sqrt(sum((v - mean) ** 2 for v in values) / (len(values) - 1))
+
+
+# Below this many dated IC observations a t-statistic (and especially a HAC
+# one) is not interpretable, so it is reported as ``None`` rather than a
+# misleadingly large number.
+MIN_DATES_FOR_TSTAT = 10
+
+
+def overlap_lag(dates: Sequence[date], horizon: int) -> int:
+    """Number of later decision dates whose label window overlaps an earlier one.
+
+    A ``horizon``-trading-row label spans roughly ``horizon * 7 / 5`` calendar
+    days; consecutive decision dates closer than that share realised returns,
+    so their ICs are serially correlated (MA(q) with q = this lag).
+    """
+    ordered = sorted(set(dates))
+    span_days = horizon * 7 / 5
+    lag = 0
+    for i, start in enumerate(ordered):
+        overlapping = sum(1 for later in ordered[i + 1 :] if (later - start).days < span_days)
+        lag = max(lag, overlapping)
+    return lag
+
+
+def newey_west_tstat(values: Sequence[float], lag: int) -> float | None:
+    """t-statistic of the mean with a Newey-West (Bartlett kernel) HAC variance."""
+    n = len(values)
+    if n < 2:
+        return None
+    mean = sum(values) / n
+    resid = [v - mean for v in values]
+    lag = max(0, min(lag, n - 1))
+    long_run = sum(r * r for r in resid) / n
+    for k in range(1, lag + 1):
+        weight = 1.0 - k / (lag + 1.0)
+        autocov = sum(resid[t] * resid[t - k] for t in range(k, n)) / n
+        long_run += 2.0 * weight * autocov
+    if long_run <= 0:
+        return None
+    return mean / math.sqrt(long_run / n)
 
 
 def evaluate_horizon(
@@ -194,6 +244,15 @@ def evaluate_horizon(
     ic_mean = _mean(ic_values)
     ic_std = _std(ic_values)
     icir = ic_mean / ic_std if (ic_mean is not None and ic_std not in (None, 0)) else None
+    enough = len(ic_values) >= MIN_DATES_FOR_TSTAT
+    ic_tstat = icir * math.sqrt(len(ic_values)) if (icir is not None and enough) else None
+    ic_dates = sorted(d for d, v in ics.items() if v is not None)
+    nw_lag = overlap_lag(ic_dates, horizon) if ic_dates else None
+    ic_tstat_nw = (
+        newey_west_tstat([ics[d] for d in ic_dates], nw_lag)  # type: ignore[misc]
+        if (nw_lag is not None and enough and nw_lag < len(ic_dates) // 2)
+        else None
+    )
 
     neutral_pairs = _pairs(observations, label_key, sector_neutral=True)
     neutral_ics = [
@@ -250,6 +309,9 @@ def evaluate_horizon(
         if n_quantile_dates
         else None,
         n_quantiles=n_quantiles,
+        ic_tstat=ic_tstat,
+        ic_tstat_newey_west=ic_tstat_nw,
+        newey_west_lag=nw_lag,
     )
 
 
@@ -379,13 +441,14 @@ def _markdown(report: RankingReport) -> str:
         lines.append(f"- Reliability grade dispersion: {report.grade_dispersion}")
     lines += [
         "",
-        "| horizon | IC mean | ICIR | sector-neutral IC | quantile spread | "
+        "| horizon | IC mean | ICIR | t (NW) | sector-neutral IC | quantile spread | "
         "hit>0 | hit>median | coverage |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for h in report.horizons:
         lines.append(
             f"| {h.horizon} | {_fmt(h.ic_mean)} | {_fmt(h.icir)} | "
+            f"{_fmt(h.ic_tstat_newey_west)} | "
             f"{_fmt(h.sector_neutral_ic_mean)} | {_fmt(h.quantile_spread_mean)} | "
             f"{_fmt(h.hit_rate_top_positive)} | {_fmt(h.hit_rate_top_above_median)} | "
             f"{h.coverage_count} |"

@@ -943,6 +943,11 @@ def score_leakage_safe_validation(
         "walk_forward_validation_status": wf_status,
         "walk_forward_split_count": split_count,
         "walk_forward_insufficient_sample_splits": insufficient_splits,
+        # The commercial ranking_score is a fixed rule (no fitted parameters per
+        # split), so these "walk-forward" splits measure time-split STABILITY of a
+        # fixed score, not out-of-sample performance of a re-trained model.
+        "walk_forward_method": "fixed_score_time_split_stability",
+        "walk_forward_retrains_model": False,
         "validation_integrity_score": round(float(integrity_score), 2),
         "validation_integrity_status": _status_from_score(integrity_score, rows=rows),
         "number_of_validation_dates": date_count,
@@ -962,6 +967,7 @@ def score_leakage_safe_validation(
                 "timing_limited_rows_present" if timing_limited_rows else "",
                 "score_component_contamination" if contamination_rows else "",
                 "insufficient_walk_forward_splits" if ok_splits < 3 else "",
+                "walk_forward_is_fixed_score_time_split_not_retrained_oos",
                 "date_or_group_concentration" if concentration_level in {"high", "medium"} else "",
                 "small_leakage_safe_sample" if safe_rows < 50 else "",
             ]

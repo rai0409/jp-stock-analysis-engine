@@ -28,6 +28,7 @@ from jp_stock_analysis.schemas import (
     CompanyMetadata,
     DisclosureDocument,
     FinancialStatement,
+    MarginBalance,
     PriceBar,
 )
 
@@ -193,6 +194,116 @@ def build_synthetic_bundle() -> SyntheticBundle:
         decision_dates=decision_dates,
         bundle_disclosure_date=bundle_disclosure_date,
         horizons=HORIZONS,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Rich synthetic bundle: OHLC + guidance + calendar + margin (extended features)
+# --------------------------------------------------------------------------- #
+RICH_N_TICKERS = 24
+RICH_N_PRICE_ROWS = 420
+RICH_DECISION_INDICES = tuple(range(260, 360, 10))  # 10 weekly-ish decision dates
+RICH_HORIZONS = (5, 20)
+
+
+@dataclass(frozen=True)
+class RichSyntheticBundle:
+    fundamentals: dict[str, list[FinancialStatement]]
+    prices: dict[str, list[PriceBar]]
+    metadata: dict[str, CompanyMetadata]
+    decision_dates: list[date]
+    horizons: tuple[int, ...]
+    earnings_dates: dict[str, list[date]]
+    margin: dict[str, list[MarginBalance]]
+
+
+def build_rich_synthetic_bundle() -> RichSyntheticBundle:
+    """Deterministic OHLCV + guidance + earnings calendar + margin fixture.
+
+    SYNTHETIC ONLY. Exists so the extended (trading) feature set and the
+    research transformers can be exercised end-to-end with >250 rows of
+    history and 10 decision dates. Every statement carries its own disclosure
+    date (point-in-time). A faint link between guidance revision and later drift
+    keeps metrics non-degenerate; it is a fixture artefact, never a finding.
+    """
+    tickers = [f"{2001 + i:04d}" for i in range(RICH_N_TICKERS)]
+    dates = _business_days(date(2024, 1, 1), RICH_N_PRICE_ROWS)
+    decision_dates = [dates[i] for i in RICH_DECISION_INDICES]
+    fundamentals: dict[str, list[FinancialStatement]] = {}
+    prices: dict[str, list[PriceBar]] = {}
+    metadata: dict[str, CompanyMetadata] = {}
+    earnings_dates: dict[str, list[date]] = {}
+    margin: dict[str, list[MarginBalance]] = {}
+    for index, ticker in enumerate(tickers):
+        rng = _Lcg(index + 101)
+        revision = ((index * 5 + 1) % RICH_N_TICKERS) / (RICH_N_TICKERS - 1) - 0.5  # -0.5..0.5
+        vol = 0.012 + (index % 5) * 0.003
+        price = 600.0 + index * 75.0
+        bars: list[PriceBar] = []
+        for row, d in enumerate(dates):
+            drift = 0.0002 + (revision * 0.0015 if row >= 270 else 0.0)
+            prev = price
+            price = max(1.0, price * (1.0 + drift + (rng.uniform() - 0.5) * 2.0 * vol))
+            open_ = prev * (1.0 + (rng.uniform() - 0.5) * vol)
+            high = max(open_, price) * (1.0 + rng.uniform() * vol)
+            low = min(open_, price) * (1.0 - rng.uniform() * vol)
+            bars.append(
+                PriceBar(
+                    ticker=ticker, date=d, open=round(open_, 2), high=round(high, 2),
+                    low=round(low, 2), close=round(price, 2), adjusted_close=round(price, 2),
+                    volume=float(20_000 + index * 1_500 + int(rng.uniform() * 5_000)),
+                )
+            )
+        prices[ticker] = bars
+        shares = 1_000_000.0 + index * 40_000.0
+        revenue = 80_000_000.0 + index * 6_000_000.0
+        net_income = revenue * (0.03 + (index % 6) * 0.01)
+        base_eps = net_income / shares
+        common = dict(
+            ticker=ticker, accounting_basis="consolidated", shares_outstanding=shares,
+            total_assets=revenue * 1.6, equity=revenue * 0.7, revenue=revenue,
+            operating_income=net_income * 1.5, gross_profit=revenue * 0.3,
+            operating_cash_flow=net_income * 1.2, capital_expenditure=net_income * 0.5,
+        )
+        fy2023 = FinancialStatement(
+            **common, fiscal_year=2023, fiscal_period="FY", net_income=net_income * 0.9,
+            eps=base_eps * 0.9, disclosure_date=dates[5], forecast_fiscal_year=2024,
+            forecast_eps=base_eps, forecast_net_income=net_income,
+            forecast_dividends_per_share=base_eps * 0.3,
+        )
+        fy2024 = FinancialStatement(
+            **common, fiscal_year=2024, fiscal_period="FY", net_income=net_income,
+            eps=base_eps * (1.0 + revision * 0.2), disclosure_date=dates[250],
+            forecast_fiscal_year=2025, forecast_eps=base_eps * 1.05,
+            forecast_net_income=net_income * 1.05,
+            forecast_dividends_per_share=base_eps * 0.32,
+        )
+        q1_2025 = FinancialStatement(
+            **common, fiscal_year=2025, fiscal_period="1Q", net_income=net_income * 0.26,
+            disclosure_date=dates[270], forecast_fiscal_year=2025,
+            forecast_eps=base_eps * 1.05 * (1.0 + revision * 0.3),
+            forecast_net_income=net_income * 1.05 * (1.0 + revision * 0.3),
+            forecast_dividends_per_share=base_eps * 0.32,
+        )
+        fundamentals[ticker] = [fy2023, fy2024, q1_2025]
+        metadata[ticker] = CompanyMetadata(
+            ticker=ticker, company_name=f"Synthetic Co {ticker}",
+            sector=SECTORS[index % len(SECTORS)], market="synthetic_market",
+        )
+        earnings_dates[ticker] = [dates[270], dates[330 + index % 10]]
+        margin[ticker] = [
+            MarginBalance(
+                ticker=ticker, date=dates[r],
+                long_balance=50_000.0 + index * 2_000 + r * 10,
+                short_balance=10_000.0 + (index % 7) * 3_000,
+                published_date=dates[r + 2],
+            )
+            for r in range(0, RICH_N_PRICE_ROWS - 2, 5)
+        ]
+    return RichSyntheticBundle(
+        fundamentals=fundamentals, prices=prices, metadata=metadata,
+        decision_dates=decision_dates, horizons=RICH_HORIZONS,
+        earnings_dates=earnings_dates, margin=margin,
     )
 
 

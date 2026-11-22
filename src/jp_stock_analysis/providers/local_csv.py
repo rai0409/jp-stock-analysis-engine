@@ -18,6 +18,7 @@ from jp_stock_analysis.schemas import (
     CompanyMetadata,
     DisclosureDocument,
     FinancialStatement,
+    MarginBalance,
     PriceBar,
 )
 
@@ -58,6 +59,10 @@ _FUNDAMENTALS_ALIASES = {
     "period": "fiscal_period",
     "accounting_basis": "accounting_basis",
     "basis": "accounting_basis",
+    "disclosure_date": "disclosure_date",
+    "disclosed_date": "disclosure_date",
+    "discdate": "disclosure_date",
+    "開示日": "disclosure_date",
     "revenue": "revenue",
     "sales": "revenue",
     "net_sales": "revenue",
@@ -86,6 +91,15 @@ _FUNDAMENTALS_ALIASES = {
     "ocf": "operating_cash_flow",
     "capital_expenditure": "capital_expenditure",
     "capex": "capital_expenditure",
+    "gross_profit": "gross_profit",
+    "売上総利益": "gross_profit",
+    "forecast_fiscal_year": "forecast_fiscal_year",
+    "forecast_revenue": "forecast_revenue",
+    "forecast_operating_income": "forecast_operating_income",
+    "forecast_net_income": "forecast_net_income",
+    "forecast_eps": "forecast_eps",
+    "forecast_dividends_per_share": "forecast_dividends_per_share",
+    "forecast_dps": "forecast_dividends_per_share",
 }
 
 _METADATA_ALIASES = {
@@ -115,6 +129,12 @@ _FUNDAMENTALS_FLOAT_FIELDS = (
     "equity",
     "operating_cash_flow",
     "capital_expenditure",
+    "gross_profit",
+    "forecast_revenue",
+    "forecast_operating_income",
+    "forecast_net_income",
+    "forecast_eps",
+    "forecast_dividends_per_share",
 )
 
 
@@ -206,12 +226,64 @@ def load_fundamentals_csv(path: str | Path) -> dict[str, list[FinancialStatement
                 fiscal_year=_to_int(row.get("fiscal_year")),
                 fiscal_period=row.get("fiscal_period") or None,
                 accounting_basis=row.get("accounting_basis") or None,
+                disclosure_date=_to_date(row.get("disclosure_date")),
+                forecast_fiscal_year=_to_int(row.get("forecast_fiscal_year")),
                 source_metadata={"source": str(path)},
                 **figures,
             )
         )
     for statements in grouped.values():
         statements.sort(key=lambda s: (s.fiscal_year is None, s.fiscal_year or 0))
+    return grouped
+
+
+def load_earnings_calendar_csv(path: str | Path) -> dict[str, list[date]]:
+    """Scheduled earnings-announcement dates (ticker,date) grouped by ticker.
+
+    These are *scheduled* dates published in advance (決算発表予定日), so they
+    are known before the announcement; the modeling layer still caps how far
+    ahead a date is treated as known.
+    """
+    grouped: dict[str, list[date]] = {}
+    for index, raw in enumerate(_read_rows(path)):
+        row = _normalize_row(raw, {"ticker": "ticker", "code": "ticker", "date": "date",
+                                   "announcement_date": "date", "決算発表予定日": "date"})
+        ticker = row.get("ticker")
+        when = _to_date(row.get("date"))
+        if not ticker or when is None:
+            raise DataValidationError(
+                f"earnings calendar row {index + 1}: ticker and date required"
+            )
+        grouped.setdefault(ticker, []).append(when)
+    return {t: sorted(set(ds)) for t, ds in grouped.items()}
+
+
+def load_margin_csv(path: str | Path) -> dict[str, list[MarginBalance]]:
+    """Weekly margin balances (ticker,date,long_balance,short_balance[,published_date])."""
+    aliases = {
+        "ticker": "ticker", "code": "ticker", "date": "date",
+        "long_balance": "long_balance", "long_margin": "long_balance", "信用買残": "long_balance",
+        "short_balance": "short_balance", "short_margin": "short_balance",
+        "信用売残": "short_balance", "published_date": "published_date",
+    }
+    grouped: dict[str, list[MarginBalance]] = {}
+    for index, raw in enumerate(_read_rows(path)):
+        row = _normalize_row(raw, aliases)
+        ticker = row.get("ticker")
+        when = _to_date(row.get("date"))
+        if not ticker or when is None:
+            raise DataValidationError(f"margin CSV row {index + 1}: ticker and date required")
+        grouped.setdefault(ticker, []).append(
+            MarginBalance(
+                ticker=ticker,
+                date=when,
+                long_balance=_to_float(row.get("long_balance")),
+                short_balance=_to_float(row.get("short_balance")),
+                published_date=_to_date(row.get("published_date")),
+            )
+        )
+    for rows in grouped.values():
+        rows.sort(key=lambda r: r.date)
     return grouped
 
 

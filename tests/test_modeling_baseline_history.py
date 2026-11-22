@@ -51,10 +51,14 @@ def _append(tmp_path, record, ts=GOLDEN_TIMESTAMP):
 def test_committed_genesis_fixture_is_valid():
     report = verify_baseline_history(COMMITTED)
     assert report["status"] == STATUS_VALID
-    assert report["entry_count"] == 1
     entries = load_ledger(COMMITTED)
+    # append-only: genesis first, then any approved promotions, chained in order
+    assert report["entry_count"] == len(entries) >= 1
     assert entries[0]["parent_hash"] == GENESIS_PARENT
     assert entries[0]["entry_index"] == 0
+    for prev, cur in zip(entries, entries[1:], strict=False):
+        assert cur["parent_hash"] == prev["entry_hash"]
+        assert cur["entry_index"] == prev["entry_index"] + 1
 
 
 def test_appended_entry_chains_to_prior(tmp_path):
