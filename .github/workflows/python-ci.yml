@@ -40,7 +40,9 @@ jobs:
         run: |
           python - <<'PYCODE'
           import json
+          import os
           import platform
+          import shutil
           import tempfile
           from pathlib import Path
 
@@ -82,7 +84,35 @@ jobs:
                           "DIFF:",
                           json.dumps(entry["diff"], sort_keys=True)
                       )
+              selected = (
+                  "ensemble/ensemble.json",
+                  "linear/elastic_net/model_metadata.json",
+                  "linear/elastic_net/predictions.csv",
+                  "linear/ridge/model_metadata.json",
+                  "linear/ridge/predictions.csv",
+                  "modeling_report.json",
+                  "modeling_report.md",
+                  "neutralization/neutralized_metrics.json",
+              )
+              export_root = Path(os.environ["RUNNER_TEMP"]) / "synthetic-golden-diff"
+              for rel in selected:
+                  source = fresh / rel
+                  if not source.is_file():
+                      raise FileNotFoundError(source)
+                  destination = export_root / rel
+                  destination.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copyfile(source, destination)
+              print("SYNTHETIC_ARTIFACTS_EXPORTED:", len(selected))
           PYCODE
+
+      - name: Upload synthetic golden diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: synthetic-golden-diff
+          path: ${{ runner.temp }}/synthetic-golden-diff/
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Ruff changed recovery modules
         run: |
