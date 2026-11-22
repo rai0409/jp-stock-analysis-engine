@@ -42,3 +42,13 @@ jobs:
         run: python -m jp_stock_analysis.cli export-audit-bundle --synthetic --include-fresh-checks --output-dir "$RUNNER_TEMP/audit"
       - name: Verify audit bundle
         run: python -m jp_stock_analysis.cli verify-audit-bundle --bundle-dir "$RUNNER_TEMP/audit" --fail-on-invalid --output-dir "$RUNNER_TEMP/audit-verification"
+      - name: Capture synthetic regression diagnostics on failure
+        if: failure()
+        run: python -m jp_stock_analysis.cli check-pipeline-regression --synthetic --fail-on-regression --output-dir "$RUNNER_TEMP/diagnostic" || true
+      - name: Upload synthetic regression diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-regression-diagnostics
+          path: ${{ runner.temp }}/diagnostic
+          retention-days: 3
