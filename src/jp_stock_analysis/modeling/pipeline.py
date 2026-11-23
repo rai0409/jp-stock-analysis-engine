@@ -299,6 +299,7 @@ def run_pipeline(
     portfolio = evaluate_portfolio(
         observations_from_scored(primary_scored, primary),
         horizon=primary,
+        model_label=primary_label,
         is_synthetic=dataset.is_synthetic,
         top_quantile=config.portfolio_top_quantile,
         bottom_quantile=config.portfolio_bottom_quantile,
@@ -314,7 +315,7 @@ def run_pipeline(
     )
     neutralized = neutralized_rank_ic(
         exposure_obs, horizon=primary, exposure_columns=exposure_cols,
-        is_synthetic=dataset.is_synthetic,
+        is_synthetic=dataset.is_synthetic, model_label=primary_label,
     )
     nt_paths = write_neutralized_outputs(neutralized, run_dir / "neutralization")
     record("evaluate_neutralized_ranking", STATUS_OK, outputs=rel(nt_paths))
@@ -324,6 +325,7 @@ def run_pipeline(
     if primary_label != "baseline_factor_ranker":
         predictions["primary"] = primary_scored
     fitted: dict[str, Any] = {}
+    linear_runs: dict[str, Any] = {}
     linear_outputs: list[str] = []
     linear_warnings: list[str] = []
     for model_type in config.linear_models:
@@ -339,6 +341,7 @@ def run_pipeline(
             record("train_linear_model", STATUS_SKIPPED, skipped=f"unknown model {model_type}")
             continue
         run, scored = _train_linear(dataset, primary, factory, prices)
+        linear_runs[model_type] = run
         sub = run_dir / "linear" / model_type
         sub.mkdir(parents=True, exist_ok=True)
         _write_json(sub / "oos_validation.json", run.result.to_dict())
@@ -551,6 +554,11 @@ def run_pipeline(
     report = build_modeling_report(
         dataset, prices, bundle_disclosure_date=disclosure_date,
         transaction_cost_bps=config.transaction_cost_bps,
+        portfolio_top_quantile=config.portfolio_top_quantile,
+        portfolio_bottom_quantile=config.portfolio_bottom_quantile,
+        portfolio_rank_weighted=config.portfolio_rank_weighted,
+        neutralize_factors=config.neutralize_factors,
+        linear_runs=linear_runs,
         primary=primary_model,
         include_optional_models=config.report_optional_models,
     )

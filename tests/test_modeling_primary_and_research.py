@@ -227,3 +227,87 @@ def test_research_on_does_not_change_primary_outputs(tmp_path):
         if off.exists():
             assert off.read_bytes() == on.read_bytes(), rel
     assert (tmp_path / "on/research/transformers/tft/result.json").exists()
+
+
+@pytest.mark.parametrize("horizon", [5, 20])
+def test_pipeline_report_reuses_configured_linear_runs_and_primary_horizon(
+    tmp_path, monkeypatch, horizon
+):
+    from jp_stock_analysis.modeling import report as report_module
+
+    def unexpected_retrain(*args, **kwargs):
+        raise AssertionError("report must reuse pipeline linear runs")
+
+    monkeypatch.setattr(report_module, "_train_linear", unexpected_retrain)
+    comparison_horizons = []
+    cached_model = report_module._cached_model
+
+    def capture_horizon(*args, **kwargs):
+        comparison_horizons.append(kwargs["horizon"])
+        return cached_model(*args, **kwargs)
+
+    monkeypatch.setattr(report_module, "_cached_model", capture_horizon)
+    bundle, dataset = _bundle_and_dataset()
+    config = PipelineConfig(
+        primary_model=MODEL_BASELINE,
+        primary_horizon=horizon,
+        report_optional_models=False,
+        alpha=0.12,
+        l1_ratio=0.8,
+        portfolio_top_quantile=0.4,
+        portfolio_bottom_quantile=0.3,
+        portfolio_rank_weighted=True,
+        transaction_cost_bps=17.0,
+        neutralize_factors=("roe",),
+    )
+    run_pipeline(dataset, bundle.prices, output_dir=tmp_path, run_id="r", config=config)
+    root = tmp_path / "r"
+
+    def read(name):
+        return json.loads((root / name).read_text(encoding="utf-8"))
+
+    report = read("modeling_report.json")
+    portfolio = read("portfolio/portfolio_metrics.json")
+    neutral = read("neutralization/neutralized_metrics.json")
+    assert comparison_horizons and set(comparison_horizons) == {horizon}
+    assert report["model_comparison"]
+    assert report["primary_model"]["horizon"] == horizon
+    assert report["model_diversity"]["horizon"] == horizon
+    assert report["neutralized_rank_metrics"] == neutral
+    assert "roe" in neutral["exposure_columns"]
+    summary = report["portfolio_long_short"][str(horizon)]
+    assert summary["config"] == portfolio["config"]
+    assert summary["mean_spread"] == portfolio["spread_series"]["mean_spread"]
+    assert summary["config"]["weighting"] == "rank_weighted"
+    for name in ("ridge", "elastic_net"):
+        model = report["model_diversity"]["linear_models"][name]
+        assert model["oos"] == read(f"linear/{name}/oos_validation.json")
+        metadata_path = root / "linear" / name / "model_metadata.json"
+        if metadata_path.exists():
+            metadata = read(f"linear/{name}/model_metadata.json")
+            assert model["coefficients"] == metadata["coefficients"]
+            assert model["scaled_coefficients"] == metadata["scaled_coefficients"]
+            if name == "elastic_net":
+                assert metadata["alpha"] == 0.12
+                assert metadata["l1_ratio"] == 0.8
+
+
+def test_pipeline_report_does_not_retrain_disabled_linear_models(tmp_path, monkeypatch):
+    from jp_stock_analysis.modeling import report as report_module
+
+    def unexpected_retrain(*args, **kwargs):
+        raise AssertionError("disabled models must not be retrained")
+
+    monkeypatch.setattr(report_module, "_train_linear", unexpected_retrain)
+    bundle, dataset = _bundle_and_dataset()
+    run_pipeline(
+        dataset, bundle.prices, output_dir=tmp_path, run_id="r",
+        config=PipelineConfig(
+            primary_model=MODEL_BASELINE, report_optional_models=False, linear_models=(),
+        ),
+    )
+    report = json.loads((tmp_path / "r/modeling_report.json").read_text(encoding="utf-8"))
+    for model in report["model_diversity"]["linear_models"].values():
+        assert model["status"] == "disabled"
+        assert model["oos"]["status"] == "disabled"
+        assert model["oos"]["oos_scored_count"] == 0
