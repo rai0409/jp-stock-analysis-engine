@@ -1,0 +1,54 @@
+name: Modeling CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: modeling-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYTHONPATH: ${{ github.workspace }}/src
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install '.[dev]' 'numpy==2.4.6' 'pandas==3.0.3' 'pytest==9.0.3' 'ruff==0.15.16'
+      - name: Full test suite
+        run: PYTHON_BIN="$(command -v python)" python -m pytest -q
+      - name: Ruff on PR Python changes
+        run: |
+          git diff --name-only -z --diff-filter=ACMR origin/main...HEAD -- '*.py' |
+            xargs -0 -r python -m ruff check --no-cache
+      - name: Synthetic golden regression
+        run: python -m jp_stock_analysis.cli check-pipeline-regression --synthetic --fail-on-regression --output-dir "$RUNNER_TEMP/regression"
+      - name: Verify baseline lineage
+        run: python -m jp_stock_analysis.cli verify-baseline-lineage --fail-on-invalid --output-dir "$RUNNER_TEMP/lineage"
+      - name: Export audit bundle
+        run: python -m jp_stock_analysis.cli export-audit-bundle --synthetic --include-fresh-checks --output-dir "$RUNNER_TEMP/audit"
+      - name: Verify audit bundle
+        run: python -m jp_stock_analysis.cli verify-audit-bundle --bundle-dir "$RUNNER_TEMP/audit" --fail-on-invalid --output-dir "$RUNNER_TEMP/audit-verification"
+      - name: Capture synthetic regression diagnostics on failure
+        if: failure()
+        run: python -m jp_stock_analysis.cli check-pipeline-regression --synthetic --fail-on-regression --output-dir "$RUNNER_TEMP/diagnostic" || true
+      - name: Upload synthetic regression diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-regression-diagnostics
+          path: ${{ runner.temp }}/diagnostic
+          retention-days: 3

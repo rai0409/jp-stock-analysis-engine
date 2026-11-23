@@ -105,3 +105,13 @@ verification fail — that is the point.
 
 All are reproducibility / auditability tools — none is a model-validity or
 performance check.
+
+## Failure and recovery
+
+The official ledger is updated only as part of an approved baseline promotion.
+Ledger-backed promotions lock the pair, validate the prior chain and fingerprint,
+stage and fsync contents, persist journals, then replace the two files. The files
+are not replaced in a single atomic operation. Interrupted transactions fail
+closed until explicitly recovered as described in `docs/run_comparison.md`.
+Review journals and preserve backups before manual intervention. Existing
+entries and their hashes are retained; a successful promotion adds one entry.

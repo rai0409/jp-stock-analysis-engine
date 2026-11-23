@@ -387,9 +387,26 @@ def promote_pipeline_baseline(
                 "ledger chain is broken/unreadable: promotion blocked, baseline NOT updated"
             )
 
+    from jp_stock_analysis.modeling.baseline_transaction import (
+        corresponding_ledger,
+        official_baseline,
+        official_ledger,
+    )
+
+    if official_baseline(baseline_path):
+        require_approval = True
+        require_note = True
+    if official_baseline(baseline_path):
+        if not approved:
+            blocked_reason = blocked_reason or PROMOTION_BLOCKED_APPROVAL
+        elif not reviewer_note.strip():
+            blocked_reason = blocked_reason or PROMOTION_BLOCKED_NOTE
+        elif (
+            ledger_path is None or not official_ledger(ledger_path)
+            or Path(ledger_path).resolve() != corresponding_ledger(baseline_path).resolve()
+        ):
+            blocked_reason = blocked_reason or PROMOTION_BLOCKED_LEDGER
     updated = blocked_reason is None
-    if updated:
-        write_baseline(new_baseline, baseline_path)
 
     record = {
         "disclaimer": RESEARCH_DISCLAIMER,
@@ -420,17 +437,34 @@ def promote_pipeline_baseline(
         "appended_entry_hash": None,
     }
 
-    # Append a hash-chained ledger entry only on a successful promotion.
     if updated and ledger_path is not None:
-        from jp_stock_analysis.modeling.baseline_history import (
-            append_baseline_history_entry,
-        )
+        from jp_stock_analysis.modeling.baseline_transaction import replace_pair
 
-        entry, append_status = append_baseline_history_entry(
-            ledger_path, record, created_at_utc=fixed_timestamp
-        )
-        record["ledger_append_status"] = append_status
-        record["appended_entry_hash"] = entry["entry_hash"] if entry else None
+        try:
+            serialized = (json.dumps(new_baseline, ensure_ascii=False, indent=2) + "\n").encode()
+            entry = replace_pair(
+                Path(baseline_path), Path(ledger_path), serialized, record, fixed_timestamp
+            )
+            record["ledger_append_status"] = "appended"
+            record["appended_entry_hash"] = entry["entry_hash"]
+        except (OSError, ValueError) as exc:
+            from jp_stock_analysis.modeling.baseline_transaction import TransactionFailure, marker
+
+            pending = marker(Path(baseline_path).resolve()).exists() or marker(
+                Path(ledger_path).resolve()
+            ).exists()
+            if pending:
+                record["status"] = "blocked_recovery_required"
+            elif isinstance(exc, BlockingIOError):
+                record["status"] = "blocked_concurrent_promotion"
+            elif isinstance(exc, TransactionFailure):
+                record["status"] = f"blocked_{exc.stage}"
+            else:
+                record["status"] = "blocked_transaction_failure"
+            record["warnings"].append(str(exc))
+            updated = False
+    elif updated:
+        write_baseline(new_baseline, baseline_path)
     return record, updated
 
 

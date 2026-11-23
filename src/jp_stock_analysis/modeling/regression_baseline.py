@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -102,7 +103,16 @@ def run_golden_synthetic_pipeline(
     run_pipeline(
         dataset, bundle.prices, output_dir=output_dir, run_id=run_id,
         fixed_timestamp=fixed_timestamp, disclosure_date=bundle.bundle_disclosure_date,
-        config=PipelineConfig(transaction_cost_bps=10.0, max_weight_per_name=0.34),
+        # Environment-independent golden: the primary model and the report's
+        # model comparison use only core dependencies (no optional GBDT backend),
+        # so the baseline is identical with or without lightgbm/catboost and
+        # across their versions. The GBDT path is covered by dedicated tests.
+        config=PipelineConfig(
+            transaction_cost_bps=10.0,
+            max_weight_per_name=0.34,
+            primary_model="baseline_factor_ranker",
+            report_optional_models=False,
+        ),
     )
     return Path(output_dir) / run_id
 
@@ -129,6 +139,56 @@ def _get_path(obj: Any, dotted: str) -> Any:
     return cur
 
 
+# The synthetic golden comparison tolerates only sub-picounit rounding noise
+# in specifically enumerated diagnostic fields. This does NOT affect raw SHA,
+# actual output JSON, score computation or any other canonical fingerprints.
+_GOLDEN_DIAGNOSTIC_DECIMALS = 12
+_GOLDEN_DIAGNOSTIC_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "linear/ridge/model_metadata.json": (
+        ("coefficients",),
+        ("scaled_coefficients",),
+    ),
+    "linear/elastic_net/model_metadata.json": (
+        ("intercept",),
+        ("objective_history",),
+    ),
+    "modeling_report.json": (
+        ("model_diversity", "linear_models", "ridge", "coefficients"),
+        ("model_diversity", "linear_models", "ridge", "scaled_coefficients"),
+        ("model_diversity", "linear_models", "elastic_net", "intercept"),
+        ("neutralized_rank_metrics", "exposure_diagnostics", "post_neutralization_exposure_corr"),
+        ("neutralized_rank_metrics", "exposure_diagnostics", "max_abs_exposure_corr_after"),
+    ),
+    "neutralization/neutralized_metrics.json": (
+        ("exposure_diagnostics", "post_neutralization_exposure_corr"),
+        ("exposure_diagnostics", "max_abs_exposure_corr_after"),
+    ),
+}
+
+
+def _round_diagnostic_tree(value: Any) -> Any:
+    if type(value) is float and math.isfinite(value):
+        rounded = round(value, _GOLDEN_DIAGNOSTIC_DECIMALS)
+        return 0.0 if rounded == 0.0 else rounded  # normalize -0.0 too
+    if isinstance(value, dict):
+        return {key: _round_diagnostic_tree(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_round_diagnostic_tree(item) for item in value]
+    return value
+
+
+def _canonicalize_golden_diagnostics(canonical: Any, rel: str) -> Any:
+    for field in _GOLDEN_DIAGNOSTIC_FIELDS.get(rel, ()):
+        current = canonical
+        for key in field[:-1]:
+            if not isinstance(current, dict):
+                break
+            current = current.get(key)
+        if isinstance(current, dict) and field[-1] in current:
+            current[field[-1]] = _round_diagnostic_tree(current[field[-1]])
+    return canonical
+
+
 def _fingerprint(
     path: Path, rel: str, *, volatile_values: Sequence[str]
 ) -> dict[str, Any]:
@@ -144,7 +204,9 @@ def _fingerprint(
         if suffix == ".json":
             parsed = json.loads(data.decode("utf-8"))
             canonical = json.dumps(
-                canonicalize_json(parsed, volatile_keys=BASELINE_VOLATILE_KEYS),
+                _canonicalize_golden_diagnostics(
+                    canonicalize_json(parsed, volatile_keys=BASELINE_VOLATILE_KEYS), rel
+                ),
                 sort_keys=True,
                 ensure_ascii=False,
             )
@@ -224,14 +286,37 @@ def capture_baseline(
 
 
 def write_baseline(baseline: Mapping[str, Any], path: str | Path) -> Path:
+    from jp_stock_analysis.modeling.baseline_transaction import (
+        check_clear,
+        locked,
+        official_baseline,
+    )
+
     out = Path(path)
+    if official_baseline(out):
+        raise ValueError("official baseline requires approved transactional promotion")
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(baseline, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    with locked(out):
+        check_clear(out)
+        out.write_text(json.dumps(baseline, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return out
 
 
 def load_baseline(path: str | Path) -> dict[str, Any]:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    from jp_stock_analysis.modeling.baseline_transaction import (
+        corresponding_ledger,
+        official_baseline,
+        snapshot,
+    )
+
+    if official_baseline(path):
+        baseline, _ = snapshot(Path(path), corresponding_ledger(path))
+        return json.loads(baseline)
+    from jp_stock_analysis.modeling.baseline_transaction import check_clear, locked
+
+    with locked(Path(path)):
+        check_clear(Path(path))
+        return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 def _diff_details(

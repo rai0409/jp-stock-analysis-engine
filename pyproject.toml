@@ -38,12 +38,24 @@ dev = [
 modeling = []
 lightgbm = [
   "lightgbm>=4.0",
+  "scikit-learn>=1.3",  # required by lightgbm's LGBMRanker / LGBMRegressor wrappers
 ]
 catboost = [
   "catboost>=1.2",
 ]
+# Excel (.xlsx) listing/delisting files for survivorship control
+excel = [
+  "openpyxl>=3.1",
+]
+# Research-only transformer models (TFT-lite, cross-sectional transformer).
+# OFF by default; enable per run with --research-transformers. CPU wheels:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+research-transformers = [
+  "torch>=2.2",
+]
 all-modeling = [
   "lightgbm>=4.0",
+  "scikit-learn>=1.3",
   "catboost>=1.2",
 ]
 

@@ -66,7 +66,12 @@ The dataset consumes the topix1000 export contract:
 - disclosures carry a narrative-extraction contract (`extraction_status`, …);
   see the platform's `docs/disclosure_narrative_contract.md`. Today extraction is
   `not_attempted`, so only presence/placeholder narrative features are derived
-  (no LLM, no external NLP).
+  (no LLM, no external NLP). For modeling, `DisclosureDocument.available_date`
+  must be a verified public-availability date strictly before the decision date.
+  Same-day, unknown-date, and empty text is excluded from narrative features.
+  `target_date` and other metadata are not inferred to be availability dates;
+  providers without verified dates leave the field unset. Other disclosure
+  analysis is unaffected.
 
 ## CLI commands
 

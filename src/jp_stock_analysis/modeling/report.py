@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import statistics
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -28,9 +28,8 @@ from jp_stock_analysis.modeling.constraints import (
     PositionBook,
     apply_constraints,
 )
-from jp_stock_analysis.modeling.dataset import ModelingDataset, ModelingObservation
+from jp_stock_analysis.modeling.dataset import ModelingDataset
 from jp_stock_analysis.modeling.ensemble import rank_average_ensemble, weighted_blend
-from jp_stock_analysis.modeling.factors import ALL_FACTORS
 from jp_stock_analysis.modeling.feature_importance import (
     coefficient_importance,
     permutation_importance,
@@ -38,8 +37,12 @@ from jp_stock_analysis.modeling.feature_importance import (
 from jp_stock_analysis.modeling.linear_models import ElasticNetRanker, RidgeRanker
 from jp_stock_analysis.modeling.ml_models import (
     MODEL_BASELINE,
+    MODEL_TREE_ENSEMBLE,
     MODEL_TYPES,
+    ModelResult,
+    PrimaryModelResult,
     available_backends,
+    train_primary_model,
     train_ranking_model,
 )
 from jp_stock_analysis.modeling.monitoring import build_monitoring_report
@@ -51,6 +54,7 @@ from jp_stock_analysis.modeling.neutralization import (
     mmc_style_contribution,
     neutralized_rank_ic,
 )
+from jp_stock_analysis.modeling.out_of_sample import LinearOOSRun, linear_walk_forward_oos
 from jp_stock_analysis.modeling.portfolio_metrics import (
     STATUS_OK as PORTFOLIO_STATUS_OK,
 )
@@ -104,12 +108,21 @@ class ModelComparisonEntry:
     ic_by_horizon: dict[str, float | None]
     message: str = ""
     missing_dependency: str | None = None
+    validation: str | None = None
+    # IC restricted to the decision dates every trained model scored, so an
+    # unfitted baseline (scored on all dates) and walk-forward OOS models (no
+    # score on the first training date) are compared on the same sample.
+    ic_by_horizon_common_dates: dict[str, float | None] = field(default_factory=dict)
+    common_date_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "model_type": self.model_type,
             "status": self.status,
+            "validation": self.validation,
             "ic_by_horizon": self.ic_by_horizon,
+            "ic_by_horizon_common_dates": self.ic_by_horizon_common_dates,
+            "common_date_count": self.common_date_count,
             "message": self.message,
             "missing_dependency": self.missing_dependency,
         }
@@ -123,12 +136,13 @@ class ModelingReport:
     model_comparison: list[ModelComparisonEntry]
     readiness: dict[str, Any]
     factor_score_distribution: dict[str, float | None]
-    backends: dict[str, bool]
+    backends: dict[str, bool | str]
     portfolio_by_horizon: dict[str, PortfolioReport]
     neutralized: NeutralizedICReport | None
     mmc_style: MMCStyleReport | None
     model_diversity: dict[str, Any]
     commercial_validation: dict[str, Any]
+    primary_model: dict[str, Any] = field(default_factory=dict)
     disclaimer: str = RESEARCH_DISCLAIMER
 
     def to_dict(self) -> dict[str, Any]:
@@ -163,6 +177,7 @@ class ModelingReport:
                 }
                 for h in self.baseline_ranking.horizons
             },
+            "primary_model": self.primary_model,
             "walk_forward": self.walk_forward.to_dict(),
             "optional_backends": self.backends,
             "model_comparison": [m.to_dict() for m in self.model_comparison],
@@ -250,27 +265,14 @@ def _exposure_observations(
 
 
 def _train_linear(
-    observations: Sequence[ModelingObservation], horizon: int, model
-) -> tuple[Any, list[ScoredObservation]]:
-    """Fit a linear ranker on the labelled observations; return (model, scored)."""
-    label_key = f"forward_return_h{horizon}"
-    labelled = [o for o in observations if o.labels.get(label_key) is not None]
-    labelled.sort(key=lambda o: (o.decision_date, o.ticker))
-    matrix = [[o.features.get(f) for f in ALL_FACTORS] for o in labelled]
-    target = [float(o.labels[label_key]) for o in labelled]  # type: ignore[arg-type]
-    model.fit(matrix, target, list(ALL_FACTORS))
-    predictions = model.predict(matrix) if labelled else []
-    scored = [
-        ScoredObservation(
-            decision_date=o.decision_date,
-            ticker=o.ticker,
-            score=float(predictions[i]),
-            sector=o.sector,
-            labels=o.labels,
-        )
-        for i, o in enumerate(labelled)
-    ]
-    return model, scored
+    dataset: ModelingDataset,
+    horizon: int,
+    model_factory,
+    prices: Mapping[str, Sequence[PriceBar]] | None = None,
+) -> tuple[LinearOOSRun, list[ScoredObservation]]:
+    """Purged walk-forward OOS linear ranker; scores are never in-sample."""
+    run = linear_walk_forward_oos(dataset, horizon, model_factory, prices=prices)
+    return run, run.result.scored
 
 
 def build_model_diversity(
@@ -279,18 +281,24 @@ def build_model_diversity(
     *,
     horizon: int,
     n_quantiles: int,
+    prices: Mapping[str, Sequence[PriceBar]] | None = None,
 ) -> dict[str, Any]:
     """Linear baselines, ensemble/blend, stability, and feature importance.
 
-    Synthetic-only integration path: trains a Ridge and a real Elastic Net on the
-    in-memory dataset, ensembles them with the baseline, summarises walk-forward
-    stability, and reports feature importance. Research diagnostics only.
+    Synthetic-only integration path: trains a Ridge and a real Elastic Net with
+    purged walk-forward OOS folds, ensembles their OOS scores with the baseline,
+    summarises walk-forward stability, and reports feature importance. Research diagnostics only.
     """
-    included = dataset.included()
-    ridge, ridge_scored = _train_linear(included, horizon, RidgeRanker(alpha=1.0))
-    elastic, elastic_scored = _train_linear(
-        included, horizon, ElasticNetRanker(alpha=0.05, l1_ratio=0.5, max_iter=2000)
+    ridge_run, ridge_scored = _train_linear(
+        dataset, horizon, lambda: RidgeRanker(alpha=1.0), prices
     )
+    elastic_run, elastic_scored = _train_linear(
+        dataset,
+        horizon,
+        lambda: ElasticNetRanker(alpha=0.05, l1_ratio=0.5, max_iter=2000),
+        prices,
+    )
+    ridge, elastic = ridge_run.last_model, elastic_run.last_model
 
     predictions = {
         "baseline": list(baseline_scored),
@@ -327,29 +335,37 @@ def build_model_diversity(
         fold_metrics, horizon=horizon, is_synthetic=dataset.is_synthetic, seed_ic=seed_ic
     )
 
-    coef_importance = coefficient_importance(
-        elastic.model_metadata["scaled_coefficients"], is_synthetic=dataset.is_synthetic
-    )
     label_key = f"forward_return_h{horizon}"
-    labelled = sorted(
-        (o for o in included if o.labels.get(label_key) is not None),
-        key=lambda o: (o.decision_date, o.ticker),
-    )
-    perm = permutation_importance(
-        elastic,
-        [[o.features.get(f) for f in ALL_FACTORS] for o in labelled],
-        list(ALL_FACTORS),
-        [o.decision_date for o in labelled],
-        [o.labels[label_key] for o in labelled],
-        seed=0,
-        is_synthetic=dataset.is_synthetic,
-    )
+    coef_importance = None
+    perm = None
+    if elastic is not None:
+        coef_importance = coefficient_importance(
+            elastic.model_metadata["scaled_coefficients"], is_synthetic=dataset.is_synthetic
+        )
+        # permutation importance on the last fold's held-out rows (OOS)
+        keep = [
+            i
+            for i, o in enumerate(elastic_run.last_test_rows)
+            if o.labels.get(label_key) is not None
+        ]
+        perm = permutation_importance(
+            elastic,
+            [elastic_run.last_test_matrix[i] for i in keep],
+            list(dataset.feature_names),
+            [elastic_run.last_test_rows[i].decision_date for i in keep],
+            [elastic_run.last_test_rows[i].labels[label_key] for i in keep],
+            seed=0,
+            is_synthetic=dataset.is_synthetic,
+        )
 
     return {
         "horizon": horizon,
         "linear_models": {
-            "ridge": _linear_summary(ridge),
-            "elastic_net": _linear_summary(elastic),
+            "ridge": {**_linear_summary(ridge), "oos": ridge_run.result.to_dict()},
+            "elastic_net": {
+                **_linear_summary(elastic),
+                "oos": elastic_run.result.to_dict(),
+            },
         },
         "ensemble": {
             "rank_average": {**ensemble.to_dict(), "ic_mean": ensemble_ic},
@@ -357,19 +373,37 @@ def build_model_diversity(
         },
         "stability": stability.to_dict(),
         "feature_importance": {
-            "coefficient": coef_importance.to_dict(),
-            "permutation": perm.to_dict(),
+            "scope": "last walk-forward fold model; permutation on held-out OOS rows",
+            "coefficient": coef_importance.to_dict() if coef_importance else None,
+            "permutation": perm.to_dict() if perm else None,
         },
         "limitations": [
             "Linear/ensemble/stability/importance are research diagnostics only.",
             "Elastic Net is a real coordinate-descent L1/L2 model; sparsity is not "
             "proof of alpha.",
             "Feature importance is explanatory, not causal.",
+            "All fitted-model scores are purged walk-forward out-of-sample; the "
+            "first decision date(s) have no fitted-model score by construction.",
         ],
     }
 
 
 def _linear_summary(model) -> dict[str, Any]:
+    if model is None:
+        # no fold had purged training rows: same keys, explicit status, no values
+        return {
+            "model_version": None,
+            "status": "no_oos_fold",
+            "intercept": None,
+            "coefficients": {},
+            "scaled_coefficients": {},
+            "sparsity": None,
+            "selected_features": [],
+            "n_iter": None,
+            "converged": None,
+            "final_objective": None,
+            "warnings": ["no walk-forward fold had enough purged training rows"],
+        }
     meta = model.model_metadata
     return {
         "model_version": meta["model_version"],
@@ -465,7 +499,7 @@ def build_commercial_validation(
     audit = build_audit_manifest(
         command={"report": "modeling-report", "horizon": horizon},
         model_versions=list(model_versions),
-        feature_columns=list(ALL_FACTORS),
+        feature_columns=list(dataset.feature_names),
         target_columns=[label_key],
         horizons=list(dataset.horizons),
         no_look_ahead_status=None,
@@ -510,9 +544,38 @@ def build_modeling_report(
     transaction_cost_bps: float = 0.0,
     neutralize_factors: Sequence[str] = DEFAULT_NEUTRALIZE_FACTORS,
     neutralize_proportion: float = 1.0,
+    primary: PrimaryModelResult | None = None,
+    primary_model: str = MODEL_TREE_ENSEMBLE,
 ) -> ModelingReport:
-    """Build the full modeling report from a dataset and its price inputs."""
+    """Build the full modeling report from a dataset and its price inputs.
+
+    Portfolio, neutralized-IC and commercial-validation sections are computed
+    from the adopted primary model's OOS scores (default: tree ensemble; the
+    baseline is used only as an explicit fallback). ``ranking_by_horizon`` keeps
+    the unfitted baseline as the reference row.
+    """
     horizons = list(dataset.horizons)
+    primary_horizon = sorted({int(h) for h in horizons})[0]
+    if primary is None:
+        primary = train_primary_model(
+            dataset,
+            horizon=primary_horizon,
+            model=primary_model if include_optional_models else MODEL_BASELINE,
+            prices=prices,
+            n_quantiles=n_quantiles,
+        )
+    primary_scored = primary.scored
+    # reuse already-trained OOS members (same horizon) instead of retraining
+    model_cache: dict[str, ModelResult] = {
+        f"{name}@{primary.horizon}": result for name, result in primary.member_results.items()
+    }
+    primary_ranking = evaluate_ranking(
+        primary_scored,
+        horizons,
+        model_label=primary.model_label,
+        is_synthetic=dataset.is_synthetic,
+        n_quantiles=n_quantiles,
+    )
 
     baseline_scores = score_baseline(dataset)
     baseline_scored = [
@@ -535,16 +598,16 @@ def build_modeling_report(
     )
 
     comparison = _model_comparison(
-        dataset, horizons, n_quantiles, include_optional_models
+        dataset, horizons, n_quantiles, include_optional_models, prices, model_cache
     )
 
     # JPX-style long-short evaluation per horizon
     portfolio_by_horizon: dict[str, PortfolioReport] = {}
     for horizon in horizons:
         portfolio_by_horizon[str(horizon)] = evaluate_portfolio(
-            observations_from_scored(baseline_scored, horizon),
+            observations_from_scored(primary_scored, horizon),
             horizon=horizon,
-            model_label=MODEL_BASELINE,
+            model_label=primary.model_label,
             is_synthetic=dataset.is_synthetic,
             top_quantile=portfolio_top_quantile,
             bottom_quantile=portfolio_bottom_quantile,
@@ -552,10 +615,9 @@ def build_modeling_report(
             transaction_cost_bps=transaction_cost_bps,
         )
 
-    # Numerai-style neutralized rank metrics (primary horizon)
-    primary_horizon = sorted({int(h) for h in horizons})[0]
+    # Numerai-style neutralized rank metrics (primary horizon, primary model)
     exposure_obs, exposure_columns = _exposure_observations(
-        dataset, baseline_scored, primary_horizon, neutralize_factors
+        dataset, primary_scored, primary_horizon, neutralize_factors
     )
     neutralized = neutralized_rank_ic(
         exposure_obs,
@@ -563,15 +625,23 @@ def build_modeling_report(
         exposure_columns=exposure_columns,
         proportion=neutralize_proportion,
         is_synthetic=dataset.is_synthetic,
-        model_label=MODEL_BASELINE,
+        model_label=primary.model_label,
     )
 
-    mmc_style = _mmc_style_report(
-        dataset, baseline_scored, primary_horizon, n_quantiles
+    mmc_style = (
+        _mmc_style_report(
+            dataset, baseline_scored, primary_horizon, n_quantiles, prices, model_cache
+        )
+        if include_optional_models
+        else None
     )
 
     model_diversity = build_model_diversity(
-        dataset, baseline_scored, horizon=primary_horizon, n_quantiles=n_quantiles
+        dataset,
+        baseline_scored,
+        horizon=primary_horizon,
+        n_quantiles=n_quantiles,
+        prices=prices,
     )
 
     model_versions = ["baseline_factor_ranker_v1"] + [
@@ -581,7 +651,7 @@ def build_modeling_report(
     ]
     commercial_validation = build_commercial_validation(
         dataset,
-        baseline_scored,
+        primary_scored,
         portfolio_by_horizon[str(primary_horizon)],
         horizon=primary_horizon,
         model_versions=model_versions,
@@ -601,12 +671,32 @@ def build_modeling_report(
         model_comparison=comparison,
         readiness=readiness,
         factor_score_distribution=_factor_score_distribution(dataset),
-        backends=available_backends(),
+        # a core-only run reports that no optional backend was used (instead
+        # of which ones happen to be installed), keeping it environment-free
+        backends=(
+            available_backends()
+            if include_optional_models
+            else {"lightgbm": "not_used", "catboost": "not_used"}
+        ),
         portfolio_by_horizon=portfolio_by_horizon,
         neutralized=neutralized,
         mmc_style=mmc_style,
         model_diversity=model_diversity,
         commercial_validation=commercial_validation,
+        primary_model={
+            **primary.to_dict(),
+            "ranking_by_horizon": {
+                str(h.horizon): {
+                    "ic_mean": h.ic_mean,
+                    "icir": h.icir,
+                    "ic_tstat_newey_west": h.ic_tstat_newey_west,
+                    "quantile_spread_mean": h.quantile_spread_mean,
+                    "coverage_count": h.coverage_count,
+                    "n_dates": h.n_dates,
+                }
+                for h in primary_ranking.horizons
+            },
+        },
     )
 
 
@@ -615,6 +705,8 @@ def _mmc_style_report(
     baseline_scored: Sequence[ScoredObservation],
     horizon: int,
     n_quantiles: int,
+    prices: Mapping[str, Sequence[PriceBar]] | None = None,
+    cache: dict[str, ModelResult] | None = None,
 ) -> MMCStyleReport | None:
     """MMC-style delta vs the first trained optional model, if one is available.
 
@@ -625,8 +717,9 @@ def _mmc_style_report(
     for model_type in MODEL_TYPES:
         if model_type == MODEL_BASELINE:
             continue
-        result = train_ranking_model(
-            dataset, model_type, horizon=horizon, n_quantiles=n_quantiles
+        result = _cached_model(
+            cache if cache is not None else {}, dataset, model_type,
+            horizon=horizon, n_quantiles=n_quantiles, prices=prices,
         )
         if result.is_trained and result.scored:
             candidate = result.scored
@@ -650,39 +743,80 @@ def _mmc_style_report(
     return mmc_style_contribution(obs, horizon=horizon, is_synthetic=dataset.is_synthetic)
 
 
+def _cached_model(
+    cache: dict[str, ModelResult],
+    dataset: ModelingDataset,
+    model_type: str,
+    *,
+    horizon: int,
+    n_quantiles: int,
+    prices: Mapping[str, Sequence[PriceBar]] | None,
+) -> ModelResult:
+    """Train once per (model, horizon) within a report; reuse primary members."""
+    key = f"{model_type}@{horizon}"
+    if key not in cache:
+        cache[key] = train_ranking_model(
+            dataset, model_type, horizon=horizon, n_quantiles=n_quantiles, prices=prices
+        )
+    return cache[key]
+
+
 def _model_comparison(
     dataset: ModelingDataset,
     horizons: Sequence[int],
     n_quantiles: int,
     include_optional_models: bool,
+    prices: Mapping[str, Sequence[PriceBar]] | None = None,
+    cache: dict[str, ModelResult] | None = None,
 ) -> list[ModelComparisonEntry]:
     model_types = (
         list(MODEL_TYPES) if include_optional_models else [MODEL_BASELINE]
     )
-    entries: list[ModelComparisonEntry] = []
-    for model_type in model_types:
-        # one primary horizon for training; evaluate the model's scores on all
-        primary_horizon = sorted({int(h) for h in horizons})[0]
-        result = train_ranking_model(
-            dataset, model_type, horizon=primary_horizon, n_quantiles=n_quantiles
+    primary_horizon = sorted({int(h) for h in horizons})[0]
+    cache = cache if cache is not None else {}
+    results = [
+        _cached_model(
+            cache, dataset, model_type, horizon=primary_horizon,
+            n_quantiles=n_quantiles, prices=prices,
         )
-        ic_by_horizon: dict[str, float | None] = {}
-        if result.is_trained and result.scored:
-            ranking = evaluate_ranking(
-                result.scored,
-                horizons,
-                model_label=model_type,
-                is_synthetic=dataset.is_synthetic,
-                n_quantiles=n_quantiles,
-            )
-            ic_by_horizon = {str(h.horizon): h.ic_mean for h in ranking.horizons}
+        for model_type in model_types
+    ]
+    trained = [r for r in results if r.is_trained and r.scored]
+    common_dates: set[date] = (
+        set.intersection(*({s.decision_date for s in r.scored} for r in trained))
+        if trained
+        else set()
+    )
+
+    def _ic(scored: Sequence[ScoredObservation], label: str) -> dict[str, float | None]:
+        if not scored:
+            return {}
+        ranking = evaluate_ranking(
+            scored,
+            horizons,
+            model_label=label,
+            is_synthetic=dataset.is_synthetic,
+            n_quantiles=n_quantiles,
+        )
+        return {str(h.horizon): h.ic_mean for h in ranking.horizons}
+
+    entries: list[ModelComparisonEntry] = []
+    for model_type, result in zip(model_types, results, strict=True):
+        is_ok = result.is_trained and bool(result.scored)
         entries.append(
             ModelComparisonEntry(
                 model_type=model_type,
                 status=result.status,
-                ic_by_horizon=ic_by_horizon,
+                ic_by_horizon=_ic(result.scored, model_type) if is_ok else {},
                 message=result.message,
                 missing_dependency=result.missing_dependency,
+                validation=result.validation,
+                ic_by_horizon_common_dates=(
+                    _ic([s for s in result.scored if s.decision_date in common_dates], model_type)
+                    if is_ok
+                    else {}
+                ),
+                common_date_count=len(common_dates) if is_ok else 0,
             )
         )
     return entries
@@ -769,13 +903,26 @@ def _markdown(report: ModelingReport) -> str:
         "## Model comparison",
         "",
         f"- Optional backends: {report.backends}",
+        f"- Primary model (drives portfolio / neutralized / commercial sections): "
+        f"`{report.primary_model.get('model_label')}` "
+        f"(validation {report.primary_model.get('validation')}, "
+        f"fallback {report.primary_model.get('fallback_used')})",
         "",
-        "| model | status | IC by horizon |",
-        "| --- | --- | --- |",
+        "| model | status | validation | IC by horizon | IC on common dates (n) |",
+        "| --- | --- | --- | --- | --- |",
     ]
     for m in report.model_comparison:
         ic = ", ".join(f"h{k}={_fmt(v)}" for k, v in sorted(m.ic_by_horizon.items())) or "—"
-        lines.append(f"| `{m.model_type}` | {m.status} | {ic} |")
+        common = (
+            ", ".join(
+                f"h{k}={_fmt(v)}" for k, v in sorted(m.ic_by_horizon_common_dates.items())
+            )
+            or "—"
+        )
+        lines.append(
+            f"| `{m.model_type}` | {m.status} | {m.validation or '—'} | {ic} | "
+            f"{common} ({m.common_date_count}) |"
+        )
     lines.append("")
 
     lines += [
@@ -864,11 +1011,15 @@ def _markdown(report: ModelingReport) -> str:
         f"mean {_fmt(rank_ic_stab.get('mean'))}, std {_fmt(rank_ic_stab.get('std'))}, "
         f"positive rate {_fmt(rank_ic_stab.get('positive_period_rate'))}"
     )
-    perm_rows = md["feature_importance"]["permutation"]["rows"][:3]
-    lines.append(
-        "- Top permutation importance: "
-        + ", ".join(f"{r['feature']}={_fmt(r['importance'])}" for r in perm_rows)
-    )
+    permutation = md["feature_importance"]["permutation"]
+    if permutation:
+        perm_rows = permutation["rows"][:3]
+        lines.append(
+            "- Top permutation importance (held-out OOS rows): "
+            + ", ".join(f"{r['feature']}={_fmt(r['importance'])}" for r in perm_rows)
+        )
+    else:
+        lines.append("- Permutation importance: unavailable (no OOS fold)")
     lines.append("")
 
     cv = data["commercial_validation"]

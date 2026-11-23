@@ -36,18 +36,19 @@ from jp_stock_analysis.modeling.constraints import (
 )
 from jp_stock_analysis.modeling.dataset import ModelingDataset, write_dataset_outputs
 from jp_stock_analysis.modeling.ensemble import rank_average_ensemble, weighted_blend
-from jp_stock_analysis.modeling.factors import ALL_FACTORS
 from jp_stock_analysis.modeling.feature_importance import (
     coefficient_importance,
     permutation_importance,
 )
 from jp_stock_analysis.modeling.linear_models import ElasticNetRanker, RidgeRanker
+from jp_stock_analysis.modeling.ml_models import train_primary_model
 from jp_stock_analysis.modeling.monitoring import build_monitoring_report, write_monitoring_outputs
 from jp_stock_analysis.modeling.neutralization import (
     ExposureObservation,
     neutralized_rank_ic,
     write_neutralized_outputs,
 )
+from jp_stock_analysis.modeling.out_of_sample import linear_walk_forward_oos
 from jp_stock_analysis.modeling.portfolio_metrics import (
     evaluate_portfolio,
     observations_from_scored,
@@ -60,6 +61,10 @@ from jp_stock_analysis.modeling.ranking_metrics import (
     write_ranking_outputs,
 )
 from jp_stock_analysis.modeling.report import build_modeling_report, write_modeling_report_outputs
+from jp_stock_analysis.modeling.research_transformers import (
+    TransformerResearchConfig,
+    run_transformer_research,
+)
 from jp_stock_analysis.modeling.stability import (
     build_stability_report,
     compute_fold_metrics,
@@ -94,7 +99,9 @@ class PipelineConfig:
     portfolio_top_quantile: float = 0.2
     portfolio_bottom_quantile: float = 0.2
     portfolio_rank_weighted: bool = False
-    transaction_cost_bps: float = 0.0
+    # one-way cost per unit turnover; ~10 bps is a realistic floor for liquid
+    # TSE Prime names (commission + half-spread). 0 overstates net returns.
+    transaction_cost_bps: float = 10.0
     max_weight_per_name: float | None = None
     max_sector_weight: float | None = None
     max_participation_rate: float | None = None
@@ -102,6 +109,28 @@ class PipelineConfig:
     monitoring_window: int = 3
     monitoring_threshold: float = 2.0
     neutralize_factors: tuple[str, ...] = ("momentum_60d", "leverage")
+    # Adopted primary model. ``tree_ensemble`` = rank-average of purged
+    # walk-forward OOS LightGBM + CatBoost regressors and an OOS Ridge anchor.
+    # Falls back to the unfitted baseline (with a warning) when no tree backend
+    # is installed. Set to ``baseline_factor_ranker`` to reproduce legacy runs.
+    primary_model: str = "tree_ensemble"
+    tree_members: tuple[str, ...] = ("lightgbm_regressor", "catboost_regressor")
+    include_ridge_in_primary: bool = True
+    # Include optional GBDT backends in the report's model comparison / MMC.
+    # The golden regression baseline turns this off so its artifacts do not
+    # depend on which optional backends (or versions) are installed.
+    report_optional_models: bool = True
+    # refit every N decision dates (1 = every date; 4 on weekly dates = monthly)
+    refit_every_periods: int = 1
+    # GBDT threads for the primary model (reproducible with fixed seeds)
+    tree_n_jobs: int = 1
+    # Research-only transformer models (TFT-lite, cross-sectional transformer).
+    # OFF by default; never drives the primary ranking/portfolio steps.
+    research_transformers: bool = False
+    research_transformer_models: tuple[str, ...] = ("tft", "gru", "cross_sectional_transformer")
+    # cpu_test | cpu_small | gpu_4060 (see TransformerResearchConfig.preset)
+    research_preset: str = "cpu_small"
+    research_device: str | None = None  # override the preset's device
 
 
 @dataclass
@@ -151,21 +180,14 @@ def _exposure_observations(dataset, scored, horizon, factor_columns):
     return out, [*factor_columns, *(f"sector::{s}" for s in sectors)]
 
 
-def _train_linear(dataset, horizon, model):
-    label_key = f"forward_return_h{horizon}"
-    labelled = sorted(
-        (o for o in dataset.included() if o.labels.get(label_key) is not None),
-        key=lambda o: (o.decision_date, o.ticker),
-    )
-    matrix = [[o.features.get(f) for f in ALL_FACTORS] for o in labelled]
-    target = [float(o.labels[label_key]) for o in labelled]
-    model.fit(matrix, target, list(ALL_FACTORS))
-    predictions = model.predict(matrix) if labelled else []
-    scored = [
-        ScoredObservation(o.decision_date, o.ticker, float(predictions[i]), o.sector, o.labels)
-        for i, o in enumerate(labelled)
-    ]
-    return model, scored, labelled, matrix
+def _train_linear(dataset, horizon, model_factory, prices=None):
+    """Purged walk-forward OOS linear ranker (see ``modeling/out_of_sample.py``).
+
+    Returns the OOS run and its scored rows. Scores exist only for decision
+    dates the fold model was not trained on, so downstream metrics are honest.
+    """
+    run = linear_walk_forward_oos(dataset, horizon, model_factory, prices=prices)
+    return run, run.result.scored
 
 
 def _write_json(path: Path, payload: Any) -> None:
@@ -222,6 +244,32 @@ def run_pipeline(
         s for s in scored_observations(dataset, score_baseline(dataset)) if s.score is not None
     ]
 
+    # 1b. adopted primary model (OOS tree ensemble by default)
+    primary_model = train_primary_model(
+        dataset,
+        horizon=primary,
+        model=config.primary_model,
+        prices=prices,
+        tree_members=config.tree_members,
+        include_ridge=config.include_ridge_in_primary,
+        refit_every=config.refit_every_periods,
+        n_jobs=config.tree_n_jobs,
+    )
+    primary_scored = primary_model.scored
+    primary_label = primary_model.model_label
+    _write_json(run_dir / "primary" / "primary_model.json", primary_model.to_dict())
+    with (run_dir / "primary" / "predictions.csv").open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh, lineterminator="\n")
+        writer.writerow(["ticker", "decision_date", "oos_score"])
+        for s in sorted(primary_scored, key=lambda o: (o.decision_date, o.ticker)):
+            writer.writerow([s.ticker, s.decision_date.isoformat(), f"{s.score:.8f}"])
+    record(
+        "train_primary_model",
+        STATUS_OK,
+        outputs=["primary/predictions.csv", "primary/primary_model.json"],
+        warnings=list(primary_model.warnings),
+    )
+
     # 2. readiness (surface BLOCKED, never bypass)
     tickers = sorted({o.ticker for o in dataset.included()}) or sorted(
         {o.ticker for o in dataset.observations}
@@ -241,7 +289,7 @@ def run_pipeline(
 
     # 3. ranking
     ranking = evaluate_ranking(
-        baseline_scored, horizons, model_label="baseline_factor_ranker",
+        primary_scored, horizons, model_label=primary_label,
         is_synthetic=dataset.is_synthetic,
     )
     rk_paths = write_ranking_outputs(ranking, run_dir / "ranking")
@@ -249,7 +297,7 @@ def run_pipeline(
 
     # 4. portfolio
     portfolio = evaluate_portfolio(
-        observations_from_scored(baseline_scored, primary),
+        observations_from_scored(primary_scored, primary),
         horizon=primary,
         is_synthetic=dataset.is_synthetic,
         top_quantile=config.portfolio_top_quantile,
@@ -262,7 +310,7 @@ def run_pipeline(
 
     # 5. neutralization
     exposure_obs, exposure_cols = _exposure_observations(
-        dataset, baseline_scored, primary, config.neutralize_factors
+        dataset, primary_scored, primary, config.neutralize_factors
     )
     neutralized = neutralized_rank_ic(
         exposure_obs, horizon=primary, exposure_columns=exposure_cols,
@@ -273,34 +321,51 @@ def run_pipeline(
 
     # 6. linear models + 7. ensemble
     predictions: dict[str, list[ScoredObservation]] = {"baseline": baseline_scored}
+    if primary_label != "baseline_factor_ranker":
+        predictions["primary"] = primary_scored
     fitted: dict[str, Any] = {}
     linear_outputs: list[str] = []
+    linear_warnings: list[str] = []
     for model_type in config.linear_models:
         if model_type == "ridge":
-            model = RidgeRanker(alpha=1.0)
+            def factory():
+                return RidgeRanker(alpha=1.0)
         elif model_type == "elastic_net":
-            model = ElasticNetRanker(
-                alpha=config.alpha, l1_ratio=config.l1_ratio, max_iter=2000
-            )
+            def factory():
+                return ElasticNetRanker(
+                    alpha=config.alpha, l1_ratio=config.l1_ratio, max_iter=2000
+                )
         else:
             record("train_linear_model", STATUS_SKIPPED, skipped=f"unknown model {model_type}")
             continue
-        model, scored, labelled, matrix = _train_linear(dataset, primary, model)
-        predictions[model_type] = scored
-        fitted[model_type] = (model, labelled, matrix)
+        run, scored = _train_linear(dataset, primary, factory, prices)
         sub = run_dir / "linear" / model_type
         sub.mkdir(parents=True, exist_ok=True)
-        _write_json(sub / "model_metadata.json", model.model_metadata)
+        _write_json(sub / "oos_validation.json", run.result.to_dict())
+        linear_outputs.append(f"linear/{model_type}/oos_validation.json")
+        if not run.result.ok or run.last_model is None:
+            linear_warnings.append(
+                f"{model_type}: no out-of-sample predictions ({run.result.status})"
+            )
+            continue
+        predictions[model_type] = scored
+        fitted[model_type] = run
+        _write_json(sub / "model_metadata.json", run.last_model.model_metadata)
         with (sub / "predictions.csv").open("w", encoding="utf-8", newline="") as handle:
             writer = csv.writer(handle, lineterminator="\n")
-            writer.writerow(["ticker", "decision_date", "prediction"])
+            writer.writerow(["ticker", "decision_date", "oos_prediction"])
             for s in scored:
                 writer.writerow([s.ticker, s.decision_date.isoformat(), f"{s.score:.8f}"])
         linear_outputs += [
             f"linear/{model_type}/model_metadata.json",
             f"linear/{model_type}/predictions.csv",
         ]
-    record("train_linear_models", STATUS_OK, outputs=sorted(linear_outputs))
+    record(
+        "train_linear_models",
+        STATUS_OK,
+        outputs=sorted(linear_outputs),
+        warnings=linear_warnings,
+    )
 
     ensemble = rank_average_ensemble(predictions, is_synthetic=dataset.is_synthetic)
     blend = weighted_blend(
@@ -312,10 +377,60 @@ def run_pipeline(
     )
     record("build_ensemble", STATUS_OK, outputs=["ensemble/ensemble.json"])
 
+    # 7b. research-only transformers (ON/OFF switch; default OFF). Never feeds
+    # the primary ranking/portfolio/monitoring steps — comparison only.
+    if config.research_transformers:
+        research_results = run_transformer_research(
+            dataset,
+            horizon=primary,
+            config=TransformerResearchConfig.preset(
+                config.research_preset,
+                enabled=True,
+                models=config.research_transformer_models,
+                refit_every=config.refit_every_periods,
+                **({"device": config.research_device} if config.research_device else {}),
+            ),
+            prices=prices,
+            reference_scored=primary_scored,
+            reference_label=primary_label,
+        )
+        research_outputs: list[str] = []
+        research_warnings: list[str] = []
+        for result in research_results:
+            sub = run_dir / "research" / "transformers" / result.model_type
+            _write_json(sub / "result.json", result.to_dict())
+            research_outputs.append(f"research/transformers/{result.model_type}/result.json")
+            if result.scored:
+                with (sub / "predictions.csv").open("w", encoding="utf-8", newline="") as fh:
+                    writer = csv.writer(fh, lineterminator="\n")
+                    writer.writerow(["ticker", "decision_date", "oos_score"])
+                    for s in sorted(result.scored, key=lambda o: (o.decision_date, o.ticker)):
+                        writer.writerow([s.ticker, s.decision_date.isoformat(), f"{s.score:.8f}"])
+                research_outputs.append(
+                    f"research/transformers/{result.model_type}/predictions.csv"
+                )
+            if not result.is_trained:
+                research_warnings.append(f"{result.model_type}: {result.status}")
+        record(
+            "research_transformer_models",
+            STATUS_OK if any(r.is_trained for r in research_results) else STATUS_SKIPPED,
+            outputs=sorted(research_outputs),
+            warnings=research_warnings,
+            skipped=None if any(r.is_trained for r in research_results) else (
+                "no research transformer trained (see research/transformers/*/result.json)"
+            ),
+        )
+    else:
+        record(
+            "research_transformer_models",
+            STATUS_SKIPPED,
+            skipped="research transformers OFF (enable with --research-transformers)",
+        )
+
     # 8. stability
     plan = build_walk_forward_plan(dataset.decision_dates, horizons=[primary])
-    fold_metrics = compute_fold_metrics(baseline_scored, plan.folds, horizon=primary)
-    seed_ic = synthetic_seed_ic(baseline_scored, horizon=primary, seeds=[0, 1, 2, 3])
+    fold_metrics = compute_fold_metrics(primary_scored, plan.folds, horizon=primary)
+    seed_ic = synthetic_seed_ic(primary_scored, horizon=primary, seeds=[0, 1, 2, 3])
     stability = build_stability_report(
         fold_metrics, horizon=primary, is_synthetic=dataset.is_synthetic, seed_ic=seed_ic
     )
@@ -326,25 +441,38 @@ def run_pipeline(
     fi_status = STATUS_OK
     fi_skip = None
     if "elastic_net" in fitted:
-        model, labelled, matrix = fitted["elastic_net"]
+        run = fitted["elastic_net"]
+        model = run.last_model
         label_key = f"forward_return_h{primary}"
+        # Coefficients of the most recent fold model; permutation importance is
+        # measured on that fold's held-out (OOS) test rows, not on training data.
+        test_rows = [o for o in run.last_test_rows if o.labels.get(label_key) is not None]
+        test_matrix = [
+            row
+            for row, o in zip(run.last_test_matrix, run.last_test_rows, strict=True)
+            if o.labels.get(label_key) is not None
+        ]
         coef = coefficient_importance(
             model.model_metadata["scaled_coefficients"], is_synthetic=dataset.is_synthetic
         )
         perm = permutation_importance(
-            model, matrix, list(ALL_FACTORS),
-            [o.decision_date for o in labelled],
-            [o.labels[label_key] for o in labelled],
+            model, test_matrix, list(dataset.feature_names),
+            [o.decision_date for o in test_rows],
+            [o.labels[label_key] for o in test_rows],
             seed=0, is_synthetic=dataset.is_synthetic,
         )
         _write_json(
             run_dir / "feature_importance" / "feature_importance.json",
-            {"coefficient": coef.to_dict(), "permutation": perm.to_dict()},
+            {
+                "scope": "last walk-forward fold; permutation on held-out OOS rows",
+                "coefficient": coef.to_dict(),
+                "permutation": perm.to_dict(),
+            },
         )
         fi_outputs = ["feature_importance/feature_importance.json"]
     else:
         fi_status = STATUS_SKIPPED
-        fi_skip = "elastic_net not trained; coefficient importance unavailable"
+        fi_skip = "elastic_net produced no OOS model; importance unavailable"
         fi_outputs = []
     record("compute_feature_importance", fi_status, outputs=fi_outputs, skipped=fi_skip)
 
@@ -393,7 +521,7 @@ def run_pipeline(
     }
     label_key = f"forward_return_h{primary}"
     scored_by_date: dict[date, list[ScoredObservation]] = {}
-    for obs in baseline_scored:
+    for obs in primary_scored:
         scored_by_date.setdefault(obs.decision_date, []).append(obs)
     for spread in sorted(portfolio.per_date, key=lambda s: s.decision_date):
         iso = spread.decision_date.isoformat()
@@ -423,6 +551,8 @@ def run_pipeline(
     report = build_modeling_report(
         dataset, prices, bundle_disclosure_date=disclosure_date,
         transaction_cost_bps=config.transaction_cost_bps,
+        primary=primary_model,
+        include_optional_models=config.report_optional_models,
     )
     rp_paths = write_modeling_report_outputs(report, run_dir)
     record("build_modeling_report", STATUS_OK, outputs=rel(rp_paths))
@@ -435,12 +565,15 @@ def run_pipeline(
     )
     input_fingerprints = [fingerprint_file(p) for p in input_files]
     model_versions = ["baseline_factor_ranker_v1"] + [
-        fitted[m][0].model_metadata["model_version"] for m in fitted
+        f"{name}:{member.get('model_version') or member.get('validation')}"
+        for name, member in sorted(primary_model.members.items())
+    ] + [
+        fitted[m].last_model.model_metadata["model_version"] for m in fitted
     ]
     audit = build_audit_manifest(
         command={"command": "run-modeling-pipeline", "run_id": run_id},
         model_versions=model_versions,
-        feature_columns=list(ALL_FACTORS),
+        feature_columns=list(dataset.feature_names),
         target_columns=[f"forward_return_h{primary}"],
         horizons=horizons,
         no_look_ahead_status=readiness.overall_status,
@@ -482,6 +615,10 @@ def run_pipeline(
             else None
         ),
         "primary_horizon": primary,
+        "primary_model": primary_label,
+        "primary_model_fallback_used": primary_model.fallback_used,
+        "label_entry": dataset.entry,
+        "feature_count": len(dataset.feature_names),
         "horizons": horizons,
         "no_look_ahead_status": readiness.overall_status,
         "step_count": len(steps),

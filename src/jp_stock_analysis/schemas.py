@@ -86,6 +86,11 @@ class FinancialStatement(SchemaBase):
     # below are reported on. Never mix bases silently; the modeling layer filters
     # on this (see modeling/dataset.py). None when the source did not label it.
     accounting_basis: str | None = None
+    # Date this statement became public (TDnet / J-Quants ``DisclosedDate``).
+    # Used for point-in-time feature construction: a statement is usable at a
+    # decision date only when ``disclosure_date <= decision_date``. ``None`` means
+    # unknown; the modeling layer then falls back to a ticker/bundle-level date.
+    disclosure_date: date_type | None = None
     revenue: float | None = None
     operating_income: float | None = None
     net_income: float | None = None
@@ -97,7 +102,58 @@ class FinancialStatement(SchemaBase):
     equity: float | None = None
     operating_cash_flow: float | None = None
     capital_expenditure: float | None = None
+    gross_profit: float | None = None
+    # Company guidance disclosed WITH this statement (決算短信の会社予想).
+    # ``forecast_fiscal_year`` is the fiscal year the guidance refers to (a FY
+    # results release usually guides the NEXT year). Used for guidance-revision
+    # and earnings-surprise features; never treated as realised figures.
+    forecast_fiscal_year: int | None = None
+    forecast_revenue: float | None = None
+    forecast_operating_income: float | None = None
+    forecast_net_income: float | None = None
+    forecast_eps: float | None = None
+    forecast_dividends_per_share: float | None = None
     source_metadata: dict[str, str] = Field(default_factory=dict)
+
+
+class MarginBalance(SchemaBase):
+    """Weekly margin-trading balance (信用取引残高) for one ticker.
+
+    ``published_date`` is when the figure became public (JPX publishes the
+    week's balance a few business days later). Features only use rows whose
+    publication is on or before the decision date; when it is unknown a
+    conservative lag is applied by the modeling layer.
+    """
+
+    ticker: str
+    date: date_type
+    long_balance: float | None = None
+    short_balance: float | None = None
+    published_date: date_type | None = None
+
+
+class ListingStatus(SchemaBase):
+    """Listing / delisting record for one ticker (survivorship-bias control).
+
+    - ``listing_date``: first day the ticker is eligible (None = unknown/old).
+    - ``delisting_date``: first day it no longer trades (None = still listed).
+    - ``delisting_reason``: free text / code from the source (e.g. TOB, merger,
+      bankruptcy, 上場廃止基準抵触) — recorded, never interpreted as a return.
+    - ``final_price``: cash-out / last settlement price per share in the same
+      (unadjusted) units as ``PriceBar.close`` when known (e.g. TOB price).
+    - ``delisting_return_pct``: return from the last traded close to the final
+      proceeds when the source provides it (e.g. CRSP-style DLRET).
+    Neither value is ever fabricated: when both are missing the label exits at
+    the last traded price, and any penalty must be configured explicitly.
+    """
+
+    ticker: str
+    listing_date: date_type | None = None
+    delisting_date: date_type | None = None
+    delisting_reason: str | None = None
+    final_price: float | None = None
+    delisting_return_pct: float | None = None
+    source: str | None = None
 
 
 class CompanyMetadata(SchemaBase):
@@ -122,6 +178,8 @@ class DisclosureDocument(SchemaBase):
     text: str = ""
     document_type: str | None = None
     fiscal_year: int | None = None
+    # Only a verified public-availability date; never inferred from metadata.
+    available_date: date_type | None = None
     source: str | None = None
     doc_id: str | None = None
     edinet_code: str | None = None

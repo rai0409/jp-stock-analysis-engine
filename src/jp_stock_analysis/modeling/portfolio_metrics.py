@@ -28,6 +28,8 @@ from typing import Any
 
 from jp_stock_analysis.modeling.ranking_metrics import RESEARCH_DISCLAIMER, ScoredObservation
 
+_TRADING_DAYS_PER_YEAR = 252
+
 MODE_COUNT = "count"
 MODE_QUANTILE = "quantile"
 
@@ -240,9 +242,19 @@ class SpreadSeriesSummary:
     worst_period: dict[str, Any] | None
     best_period: dict[str, Any] | None
     equity_curve: list[dict[str, Any]]
+    # When a horizon is known, the equity curve / drawdown compound only a
+    # non-overlapping subsequence of decision dates (an h-day return held from
+    # each of two dates closer than h days apart would double-count the shared
+    # days). The annualised Sharpe on that subsequence uses sqrt(252 / h).
+    overlap_adjusted: bool = False
+    compounded_period_count: int | None = None
+    annualized_sharpe_non_overlapping: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "overlap_adjusted": self.overlap_adjusted,
+            "compounded_period_count": self.compounded_period_count,
+            "annualized_sharpe_non_overlapping": self.annualized_sharpe_non_overlapping,
             "observation_count": self.observation_count,
             "mean_spread": self.mean_spread,
             "std_spread": self.std_spread,
@@ -256,8 +268,28 @@ class SpreadSeriesSummary:
         }
 
 
+def non_overlapping_spreads(
+    spreads: Sequence[DateSpread], horizon: int
+) -> list[DateSpread]:
+    """Greedy subsequence whose h-trading-day holding windows do not overlap.
+
+    ``horizon`` trading rows are approximated as ``horizon * 7 / 5`` calendar
+    days (conservative: Japanese holidays only lengthen the real window less
+    than this skips).
+    """
+    span_days = horizon * 7 / 5
+    kept: list[DateSpread] = []
+    for spread in sorted(spreads, key=lambda s: s.decision_date):
+        if not kept or (spread.decision_date - kept[-1].decision_date).days >= span_days:
+            kept.append(spread)
+    return kept
+
+
 def summarize_spread_series(
-    spreads: Sequence[DateSpread], *, periods_per_year: int | None = None
+    spreads: Sequence[DateSpread],
+    *,
+    periods_per_year: int | None = None,
+    horizon: int | None = None,
 ) -> SpreadSeriesSummary:
     """Summarise the spread-return series (Sharpe-like, equity curve, drawdown)."""
     valid = [s for s in spreads if s.status == STATUS_OK and s.spread_return is not None]
@@ -275,11 +307,21 @@ def summarize_spread_series(
         sum(1 for v in series if v > 0) / len(series) if series else None
     )
 
+    compounding = non_overlapping_spreads(valid, horizon) if horizon else valid
+    annualized_non_overlap = None
+    if horizon:
+        sub = [float(s.spread_return) for s in compounding]  # type: ignore[arg-type]
+        sub_mean, sub_std = _mean(sub), _std(sub)
+        if sub_mean is not None and sub_std not in (None, 0.0):
+            annualized_non_overlap = (sub_mean / sub_std) * math.sqrt(
+                _TRADING_DAYS_PER_YEAR / horizon
+            )
+
     equity = 1.0
     peak = 1.0
     max_dd = 0.0
     curve: list[dict[str, Any]] = []
-    for spread in valid:
+    for spread in compounding:
         equity *= 1.0 + float(spread.spread_return) / 100.0  # type: ignore[arg-type]
         peak = max(peak, equity)
         if peak > 0:
@@ -309,6 +351,9 @@ def summarize_spread_series(
         worst_period=worst,
         best_period=best,
         equity_curve=curve,
+        overlap_adjusted=bool(horizon),
+        compounded_period_count=len(compounding),
+        annualized_sharpe_non_overlapping=annualized_non_overlap,
     )
 
 
@@ -703,7 +748,9 @@ def evaluate_portfolio(
         )
         for d in sorted(by_date)
     ]
-    series = summarize_spread_series(per_date, periods_per_year=periods_per_year)
+    series = summarize_spread_series(
+        per_date, periods_per_year=periods_per_year, horizon=horizon
+    )
     turnover = compute_turnover(per_date)
     cost_summary = (
         apply_transaction_cost(per_date, turnover, transaction_cost_bps=transaction_cost_bps)

@@ -121,3 +121,12 @@ validation remains required before any predictive or performance claim.
 
 Current blocker remains data coverage: disclosure date **2026-03-27** while
 adjusted-close price coverage previously ended **2026-03-19**.
+
+## Consistent baseline snapshot
+
+Export takes a cooperative lock over the baseline and ledger, checks for a
+pending transaction and captures one snapshot before copying. Official pairs
+are checked against the ledger head. Fresh checks use the bundled baseline, not
+a second read of the source. Active updates and pending recovery block export;
+independent bundles remain verifiable after export. External edits outside the
+cooperative protocol are not prevented.

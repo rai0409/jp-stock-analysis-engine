@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from jp_stock_analysis.cli import main
 
@@ -445,7 +446,11 @@ def test_show_baseline_history_writes_outputs(tmp_path):
     assert rc == 0
     summary = json.loads((out / "baseline_history.json").read_text(encoding="utf-8"))
     assert summary["chain_status"] == "valid"
-    assert summary["entry_count"] == 1
+    # the committed ledger is append-only: genesis + any approved promotions
+    from jp_stock_analysis.modeling.baseline_history import load_ledger
+
+    committed = load_ledger(Path("tests/fixtures/pipeline_baseline/baseline_history.jsonl"))
+    assert summary["entry_count"] == len(committed) >= 1
     assert (out / "baseline_history.md").exists()
 
 
@@ -542,8 +547,14 @@ def test_promote_with_ledger_appends_on_approval(tmp_path):
     from jp_stock_analysis.modeling.regression_baseline import run_golden_synthetic_pipeline
 
     a = run_golden_synthetic_pipeline(tmp_path / "a")
+    # The committed fixture already matches the golden run; use a distinct run.
+    (a / "promotion_test_metric.json").write_text('{"value": 1}\n', encoding="utf-8")
     ledger = tmp_path / "ledger.jsonl"
     shutil.copy("tests/fixtures/pipeline_baseline/baseline_history.jsonl", ledger)
+    shutil.copy(
+        "tests/fixtures/pipeline_baseline/golden_pipeline_baseline.json", tmp_path / "b.json"
+    )
+    before = len(load_ledger(ledger))
     rc = main(
         [
             "promote-pipeline-baseline",
@@ -562,7 +573,7 @@ def test_promote_with_ledger_appends_on_approval(tmp_path):
         ]
     )
     assert rc == 0
-    assert len(load_ledger(ledger)) == 2  # genesis + appended
+    assert len(load_ledger(ledger)) == before + 1  # exactly one entry appended
 
 
 def test_promote_without_approval_does_not_append(tmp_path):
@@ -574,6 +585,7 @@ def test_promote_without_approval_does_not_append(tmp_path):
     a = run_golden_synthetic_pipeline(tmp_path / "a")
     ledger = tmp_path / "ledger.jsonl"
     shutil.copy("tests/fixtures/pipeline_baseline/baseline_history.jsonl", ledger)
+    before = len(load_ledger(ledger))
     rc = main(
         [
             "promote-pipeline-baseline",
@@ -591,7 +603,7 @@ def test_promote_without_approval_does_not_append(tmp_path):
         ]
     )
     assert rc == 2  # blocked
-    assert len(load_ledger(ledger)) == 1  # unchanged genesis only
+    assert len(load_ledger(ledger)) == before  # blocked promotion appends nothing
 
 
 def test_evaluate_neutralized_ranking_synthetic(tmp_path):

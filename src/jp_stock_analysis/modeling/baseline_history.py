@@ -109,9 +109,18 @@ def _entry_content(
     }
 
 
-def load_ledger(ledger_path: str | Path) -> list[dict[str, Any]]:
+def _load_ledger_unlocked(ledger_path: str | Path) -> list[dict[str, Any]]:
     """Parse a JSONL ledger into entries. Raises ValueError on malformed JSON."""
+    from jp_stock_analysis.modeling.baseline_transaction import (
+        corresponding_baseline,
+        official_ledger,
+        snapshot,
+    )
+
     path = Path(ledger_path)
+    if official_ledger(path):
+        _, data = snapshot(corresponding_baseline(path), path)
+        return [json.loads(line) for line in data.decode().splitlines() if line.strip()]
     if not path.is_file():
         return []
     entries: list[dict[str, Any]] = []
@@ -125,7 +134,21 @@ def load_ledger(ledger_path: str | Path) -> list[dict[str, Any]]:
     return entries
 
 
-def append_baseline_history_entry(
+
+def load_ledger(ledger_path: str | Path) -> list[dict[str, Any]]:
+    from jp_stock_analysis.modeling.baseline_transaction import (
+        check_clear,
+        locked,
+        official_ledger,
+    )
+
+    if official_ledger(ledger_path):
+        return _load_ledger_unlocked(ledger_path)
+    with locked(Path(ledger_path)):
+        check_clear(Path(ledger_path))
+        return _load_ledger_unlocked(ledger_path)
+
+def _append_baseline_history_entry_unlocked(
     ledger_path: str | Path,
     promotion_record: Mapping[str, Any],
     *,
@@ -136,12 +159,16 @@ def append_baseline_history_entry(
     Returns ``(entry, status)``. Never appends for a non-promoted record, and
     refuses (without appending) if the existing chain is already broken.
     """
+    from jp_stock_analysis.modeling.baseline_transaction import official_ledger
+
+    if official_ledger(ledger_path):
+        raise ValueError("official ledger requires transactional promotion")
     if promotion_record.get("status") != "promoted":
         return None, APPEND_SKIPPED_NOT_PROMOTED
 
     path = Path(ledger_path)
     try:
-        entries = load_ledger(path)
+        entries = _load_ledger_unlocked(path)
     except ValueError:
         return None, APPEND_REFUSED_BROKEN_CHAIN
     if entries:
@@ -163,6 +190,22 @@ def append_baseline_history_entry(
         handle.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
     return entry, APPEND_APPENDED
 
+
+
+def append_baseline_history_entry(
+    ledger_path: str | Path,
+    promotion_record: Mapping[str, Any],
+    *, created_at_utc: str | None = None,
+) -> tuple[dict[str, Any] | None, str]:
+    from jp_stock_analysis.modeling.baseline_transaction import check_clear, locked
+
+    path = Path(ledger_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with locked(path):
+        check_clear(path)
+        return _append_baseline_history_entry_unlocked(
+            path, promotion_record, created_at_utc=created_at_utc
+        )
 
 def _scan_unsafe(entry: Mapping[str, Any]) -> list[str]:
     issues: list[str] = []

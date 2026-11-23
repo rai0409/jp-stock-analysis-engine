@@ -16,9 +16,10 @@ canonical synthetic config). It is the blessed reference used by
 - Provenance manifests (`audit_manifest.*`, `artifact_manifest.*`) are excluded
   because they are intentionally run/commit-specific.
 
-Regenerate only intentionally, with review, via
-`check-pipeline-regression --synthetic --update-baseline` (see
-`docs/pipeline_regression.md`).
+Generate temporary candidates with `check-pipeline-regression --synthetic
+--update-baseline` and a temporary baseline path. Official promotion requires
+explicit approval, a reviewer note and the matching ledger; see
+`docs/pipeline_regression.md` and `docs/run_comparison.md`.
 
 ## `baseline_history.jsonl` (append-only ledger)
 

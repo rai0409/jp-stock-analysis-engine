@@ -20,7 +20,6 @@ from jp_stock_analysis.analysis.jquants_commercial_common import (
     jst_now_iso,
 )
 
-
 DEFAULT_ANALYSIS_DIR = ANALYSIS_DIR
 DEFAULT_PRICES = Path("/mnt/d/jquants_price_store/prices_daily_bars.csv")
 
@@ -194,7 +193,9 @@ def _safe_num(series: pd.DataFrame | pd.Series, col: str) -> pd.Series:
 
 
 def _corr(x: pd.Series, y: pd.Series, *, method: str = "pearson") -> float:
-    data = pd.DataFrame({"x": pd.to_numeric(x, errors="coerce"), "y": pd.to_numeric(y, errors="coerce")}).dropna()
+    data = pd.DataFrame(
+        {"x": pd.to_numeric(x, errors="coerce"), "y": pd.to_numeric(y, errors="coerce")}
+    ).dropna()
     if len(data) < 2:
         return np.nan
     if method == "spearman":
@@ -282,7 +283,9 @@ def _cost_proxy(row: pd.Series) -> tuple[float, str, str]:
     return 35.0, "limited_or_unknown_capacity", "conservative_unknown_liquidity_proxy"
 
 
-def build_event_validation_panel(rankings: pd.DataFrame, *, asof: str | None = None) -> pd.DataFrame:
+def build_event_validation_panel(
+    rankings: pd.DataFrame, *, asof: str | None = None
+) -> pd.DataFrame:
     if rankings.empty:
         return pd.DataFrame(columns=PANEL_COLUMNS)
     out = rankings.copy()
@@ -339,7 +342,9 @@ def build_event_validation_panel(rankings: pd.DataFrame, *, asof: str | None = N
             contamination_details.append("")
             contamination_flags.append(False)
         same_day_risks.append(bool(after_close and same_day))
-        safe_horizon_flags.append(bool(not pd.isna(label_start) and not pd.isna(disc) and label_start >= disc))
+        safe_horizon_flags.append(
+            bool(not pd.isna(label_start) and not pd.isna(disc) and label_start >= disc)
+        )
         safety_statuses.append(status)
         timing_statuses.append(timing_status)
         leakage_reasons.append("|".join(reasons))
@@ -359,7 +364,10 @@ def build_event_validation_panel(rankings: pd.DataFrame, *, asof: str | None = N
             row_reasons.append(reason)
         if pd.isna(pd.to_numeric(pd.Series([row.get("ranking_score")]), errors="coerce").iloc[0]):
             row_reasons.append("missing_ranking_score")
-        if not _truthy(row.get("auto_classification_safe_flag")) and str(row.get("manual_review_priority")) == "high":
+        if (
+            not _truthy(row.get("auto_classification_safe_flag"))
+            and str(row.get("manual_review_priority")) == "high"
+        ):
             row_reasons.append("high_priority_manual_review")
         exclusions.append("|".join(row_reasons) if row_reasons else "")
     out["validation_exclusion_reason"] = exclusions
@@ -383,10 +391,14 @@ def build_event_validation_panel(rankings: pd.DataFrame, *, asof: str | None = N
         out[f"fwd_ret_{h}d"] = _safe_num(out, f"ret_{h}d")
         out[f"fwd_abnormal_ret_{h}d"] = _safe_num(out, f"abnormal_ret_{h}d")
         out[f"fwd_sector_adjusted_ret_{h}d"] = _safe_num(out, f"sector_adjusted_return_{h}d")
-        out[f"fwd_sector_size_adjusted_ret_{h}d"] = _safe_num(out, f"sector_size_adjusted_return_{h}d")
+        out[f"fwd_sector_size_adjusted_ret_{h}d"] = _safe_num(
+            out, f"sector_size_adjusted_return_{h}d"
+        )
         status = out.get(f"ret_{h}d_status", pd.Series("", index=out.index)).fillna("").astype(str)
         missing = out[f"fwd_ret_{h}d"].isna()
-        out[f"fwd_ret_{h}d_status"] = np.where((status == "valid") & ~missing, "valid", np.where(missing, "missing", status))
+        out[f"fwd_ret_{h}d_status"] = np.where(
+            (status == "valid") & ~missing, "valid", np.where(missing, "missing", status)
+        )
 
     costs = [_cost_proxy(row) for _, row in out.iterrows()]
     out["estimated_cost_bps"] = [x[0] for x in costs]
@@ -409,14 +421,29 @@ def _ic_rows(panel: pd.DataFrame, group_col: str, label_col: str) -> list[dict[s
             label = _safe_num(data, label_col.format(h=h))
             valid = data[["_score"]].assign(_label=label).dropna()
             if len(valid) < MIN_GROUP_SAMPLE:
-                rows.append({"group_by": group_col, "group": group, "horizon": f"{h}d", "label": label_col.format(h=h), "sample_count": int(len(valid)), "status": "insufficient_sample"})
+                rows.append(
+                    {
+                        "group_by": group_col,
+                        "group": group,
+                        "horizon": f"{h}d",
+                        "label": label_col.format(h=h),
+                        "sample_count": int(len(valid)),
+                        "status": "insufficient_sample",
+                    }
+                )
                 continue
             pearson = _corr(valid["_score"], valid["_label"], method="pearson")
             spearman = _corr(valid["_score"], valid["_label"], method="spearman")
             daily_ics = []
-            for _, date_group in data.assign(_label=label).dropna(subset=["_score", "_label"]).groupby("DiscDate", dropna=False):
+            for _, date_group in (
+                data.assign(_label=label)
+                .dropna(subset=["_score", "_label"])
+                .groupby("DiscDate", dropna=False)
+            ):
                 if len(date_group) >= MIN_DATE_SAMPLE:
-                    daily_ics.append(_corr(date_group["_score"], date_group["_label"], method="spearman"))
+                    daily_ics.append(
+                        _corr(date_group["_score"], date_group["_label"], method="spearman")
+                    )
             daily = pd.Series(daily_ics, dtype="float64").dropna()
             std = float(daily.std(ddof=1)) if len(daily) > 1 else np.nan
             rows.append(
@@ -433,7 +460,9 @@ def _ic_rows(panel: pd.DataFrame, group_col: str, label_col: str) -> list[dict[s
                     "mean_daily_ic": float(daily.mean()) if len(daily) else np.nan,
                     "median_daily_ic": float(daily.median()) if len(daily) else np.nan,
                     "ic_std": std,
-                    "ic_t_stat": float(daily.mean() / (std / np.sqrt(len(daily)))) if len(daily) > 1 and std and not np.isnan(std) else np.nan,
+                    "ic_t_stat": float(daily.mean() / (std / np.sqrt(len(daily))))
+                    if len(daily) > 1 and std and not np.isnan(std)
+                    else np.nan,
                     "status": "ok" if len(daily) else "insufficient_date_sample",
                 }
             )
@@ -481,19 +510,39 @@ def build_quantile_spread(panel: pd.DataFrame) -> pd.DataFrame:
         ]:
             for h in HORIZONS:
                 label_col = label_tpl.format(h=h)
-                data = panel.assign(_score=score, _label=_safe_num(panel, label_col)).dropna(subset=["_score", "_label"])
+                data = panel.assign(_score=score, _label=_safe_num(panel, label_col)).dropna(
+                    subset=["_score", "_label"]
+                )
                 if len(data) < MIN_GROUP_SAMPLE:
-                    rows.append({"score": score_col, "label": label_col, "horizon": f"{h}d", "return_basis": label_kind, "sample_count": int(len(data)), "status": "insufficient_sample"})
+                    rows.append(
+                        {
+                            "score": score_col,
+                            "label": label_col,
+                            "horizon": f"{h}d",
+                            "return_basis": label_kind,
+                            "sample_count": int(len(data)),
+                            "status": "insufficient_sample",
+                        }
+                    )
                     continue
                 q = min(5, int(len(data)))
                 data = data.copy()
-                data["quantile"] = pd.qcut(data["_score"].rank(method="first"), q=q, labels=False, duplicates="drop") + 1
+                data["quantile"] = (
+                    pd.qcut(
+                        data["_score"].rank(method="first"), q=q, labels=False, duplicates="drop"
+                    )
+                    + 1
+                )
                 grouped = data.groupby("quantile")["_label"]
                 means = grouped.mean()
                 top = data[data["quantile"] == data["quantile"].max()]["_label"]
                 bottom = data[data["quantile"] == data["quantile"].min()]["_label"]
                 spread = float(top.mean() - bottom.mean()) if len(top) and len(bottom) else np.nan
-                spread_series = pd.concat([top.reset_index(drop=True), -bottom.reset_index(drop=True)], axis=1).sum(axis=1, min_count=2).dropna()
+                spread_series = (
+                    pd.concat([top.reset_index(drop=True), -bottom.reset_index(drop=True)], axis=1)
+                    .sum(axis=1, min_count=2)
+                    .dropna()
+                )
                 std = spread_series.std(ddof=1) if len(spread_series) > 1 else np.nan
                 rows.append(
                     {
@@ -504,13 +553,25 @@ def build_quantile_spread(panel: pd.DataFrame) -> pd.DataFrame:
                         "sample_count": int(len(data)),
                         "quantile_count": int(data["quantile"].nunique()),
                         "top_quantile_mean_return": float(top.mean()) if len(top) else np.nan,
-                        "bottom_quantile_mean_return": float(bottom.mean()) if len(bottom) else np.nan,
+                        "bottom_quantile_mean_return": float(bottom.mean())
+                        if len(bottom)
+                        else np.nan,
                         "top_bottom_spread": spread,
-                        "top_bottom_spread_t_stat": float(spread / (std / np.sqrt(len(spread_series)))) if len(spread_series) > 1 and std and not np.isnan(std) else np.nan,
-                        "top_bottom_hit_rate": float((top > bottom.mean()).mean()) if len(top) and len(bottom) else np.nan,
+                        "top_bottom_spread_t_stat": float(
+                            spread / (std / np.sqrt(len(spread_series)))
+                        )
+                        if len(spread_series) > 1 and std and not np.isnan(std)
+                        else np.nan,
+                        "top_bottom_hit_rate": float((top > bottom.mean()).mean())
+                        if len(top) and len(bottom)
+                        else np.nan,
                         "monotonicity_score": _monotonicity(means),
-                        "sample_count_by_quantile": json.dumps(grouped.size().to_dict(), sort_keys=True),
-                        "status": "ok" if len(top) >= MIN_QUANTILE_SAMPLE and len(bottom) >= MIN_QUANTILE_SAMPLE else "insufficient_quantile_sample",
+                        "sample_count_by_quantile": json.dumps(
+                            grouped.size().to_dict(), sort_keys=True
+                        ),
+                        "status": "ok"
+                        if len(top) >= MIN_QUANTILE_SAMPLE and len(bottom) >= MIN_QUANTILE_SAMPLE
+                        else "insufficient_quantile_sample",
                     }
                 )
     return pd.DataFrame(rows)
@@ -535,7 +596,15 @@ def build_event_study(panel: pd.DataFrame) -> pd.DataFrame:
             for h in HORIZONS:
                 label = _safe_num(data, f"fwd_abnormal_ret_{h}d").dropna()
                 if len(label) < MIN_GROUP_SAMPLE:
-                    rows.append({"bucket": bucket, "group": group, "window": f"0_{h}d", "sample_count": int(len(label)), "status": "insufficient_sample"})
+                    rows.append(
+                        {
+                            "bucket": bucket,
+                            "group": group,
+                            "window": f"0_{h}d",
+                            "sample_count": int(len(label)),
+                            "status": "insufficient_sample",
+                        }
+                    )
                     continue
                 std = label.std(ddof=1)
                 rows.append(
@@ -548,9 +617,19 @@ def build_event_study(panel: pd.DataFrame) -> pd.DataFrame:
                         "car": float(label.mean()),
                         "median_car": float(label.median()),
                         "win_rate": float((label > 0).mean()),
-                        "t_stat": float(label.mean() / (std / np.sqrt(len(label)))) if std and not np.isnan(std) else np.nan,
-                        "bootstrap_ci_low": float(label.sample(frac=1.0, replace=True, random_state=17).mean()) if len(label) else np.nan,
-                        "bootstrap_ci_high": float(label.sample(frac=1.0, replace=True, random_state=29).mean()) if len(label) else np.nan,
+                        "t_stat": float(label.mean() / (std / np.sqrt(len(label))))
+                        if std and not np.isnan(std)
+                        else np.nan,
+                        "bootstrap_ci_low": float(
+                            label.sample(frac=1.0, replace=True, random_state=17).mean()
+                        )
+                        if len(label)
+                        else np.nan,
+                        "bootstrap_ci_high": float(
+                            label.sample(frac=1.0, replace=True, random_state=29).mean()
+                        )
+                        if len(label)
+                        else np.nan,
                         "status": "ok",
                     }
                 )
@@ -563,7 +642,14 @@ def build_liquidity_cost(panel: pd.DataFrame) -> pd.DataFrame:
         for h in HORIZONS:
             gross = _safe_num(data, f"fwd_abnormal_ret_{h}d").dropna()
             if len(gross) < MIN_GROUP_SAMPLE:
-                rows.append({"liquidity_capacity_bucket": bucket, "horizon": f"{h}d", "sample_count": int(len(gross)), "status": "insufficient_sample"})
+                rows.append(
+                    {
+                        "liquidity_capacity_bucket": bucket,
+                        "horizon": f"{h}d",
+                        "sample_count": int(len(gross)),
+                        "status": "insufficient_sample",
+                    }
+                )
                 continue
             cost = _safe_num(data.loc[gross.index], "estimated_cost_bps") / 10000.0
             net = gross - cost
@@ -575,7 +661,9 @@ def build_liquidity_cost(panel: pd.DataFrame) -> pd.DataFrame:
                     "estimated_cost_bps_mean": float(cost.mean() * 10000.0),
                     "gross_validation_spread": float(gross.mean()),
                     "net_validation_spread": float(net.mean()),
-                    "cost_model_basis": data["cost_model_basis"].mode().iloc[0] if "cost_model_basis" in data and not data["cost_model_basis"].mode().empty else "unknown",
+                    "cost_model_basis": data["cost_model_basis"].mode().iloc[0]
+                    if "cost_model_basis" in data and not data["cost_model_basis"].mode().empty
+                    else "unknown",
                     "status": "ok",
                 }
             )
@@ -590,9 +678,19 @@ def build_sector_size_neutral(panel: pd.DataFrame) -> pd.DataFrame:
         ("fwd_sector_size_adjusted_ret_{h}d", "sector33_name"),
     ]:
         for h in HORIZONS:
-            work = panel.assign(_score=_safe_num(panel, "ranking_score"), _label=_safe_num(panel, neutral_col.format(h=h))).dropna(subset=["_score", "_label"])
+            work = panel.assign(
+                _score=_safe_num(panel, "ranking_score"),
+                _label=_safe_num(panel, neutral_col.format(h=h)),
+            ).dropna(subset=["_score", "_label"])
             if len(work) < MIN_GROUP_SAMPLE or group_col not in work:
-                rows.append({"neutralization": group_col, "horizon": f"{h}d", "sample_count": int(len(work)), "status": "insufficient_sample"})
+                rows.append(
+                    {
+                        "neutralization": group_col,
+                        "horizon": f"{h}d",
+                        "sample_count": int(len(work)),
+                        "status": "insufficient_sample",
+                    }
+                )
                 continue
             ics = []
             spreads = []
@@ -608,10 +706,18 @@ def build_sector_size_neutral(panel: pd.DataFrame) -> pd.DataFrame:
                     "neutralization": group_col,
                     "horizon": f"{h}d",
                     "sample_count": int(len(work)),
-                    "sector_neutral_rank_ic": float(pd.Series(ics).mean()) if group_col == "sector33_name" and ics else np.nan,
-                    "size_neutral_rank_ic": float(pd.Series(ics).mean()) if group_col == "topix_size_category" and ics else np.nan,
-                    "sector_size_neutral_rank_ic": float(pd.Series(ics).mean()) if neutral_col.startswith("fwd_sector_size") and ics else np.nan,
-                    "within_group_quantile_spread": float(pd.Series(spreads).mean()) if spreads else np.nan,
+                    "sector_neutral_rank_ic": float(pd.Series(ics).mean())
+                    if group_col == "sector33_name" and ics
+                    else np.nan,
+                    "size_neutral_rank_ic": float(pd.Series(ics).mean())
+                    if group_col == "topix_size_category" and ics
+                    else np.nan,
+                    "sector_size_neutral_rank_ic": float(pd.Series(ics).mean())
+                    if neutral_col.startswith("fwd_sector_size") and ics
+                    else np.nan,
+                    "within_group_quantile_spread": float(pd.Series(spreads).mean())
+                    if spreads
+                    else np.nan,
                     "concentration_score": float((sizes**2).sum()) if len(sizes) else np.nan,
                     "status": "ok" if ics else "insufficient_group_sample",
                 }
@@ -626,22 +732,35 @@ def build_stability(panel: pd.DataFrame) -> pd.DataFrame:
     for group_col in ["event_month", "sector33_name", "topix_size_category"]:
         for group, data in work.groupby(group_col, dropna=False):
             label = _safe_num(data, "fwd_abnormal_ret_5d")
-            valid = data.assign(_label=label, _score=_safe_num(data, "ranking_score")).dropna(subset=["_label"])
+            valid = data.assign(_label=label, _score=_safe_num(data, "ranking_score")).dropna(
+                subset=["_label"]
+            )
             if len(valid) < MIN_DATE_SAMPLE:
                 status = "insufficient_sample"
                 rank_ic = np.nan
                 spread = np.nan
             else:
-                rank_ic = _corr(valid["_score"], valid["_label"], method="spearman") if valid["_score"].notna().sum() >= MIN_DATE_SAMPLE else np.nan
-                spread = valid[valid["_score"] >= valid["_score"].median()]["_label"].mean() - valid[valid["_score"] < valid["_score"].median()]["_label"].mean()
+                rank_ic = (
+                    _corr(valid["_score"], valid["_label"], method="spearman")
+                    if valid["_score"].notna().sum() >= MIN_DATE_SAMPLE
+                    else np.nan
+                )
+                spread = (
+                    valid[valid["_score"] >= valid["_score"].median()]["_label"].mean()
+                    - valid[valid["_score"] < valid["_score"].median()]["_label"].mean()
+                )
                 status = "ok"
             rows.append(
                 {
                     "group_by": group_col,
                     "group": group,
                     "sample_count": int(len(valid)),
-                    "average_score": float(_safe_num(valid, "ranking_score").mean()) if len(valid) else np.nan,
-                    "average_forward_abnormal_return": float(valid["_label"].mean()) if len(valid) else np.nan,
+                    "average_score": float(_safe_num(valid, "ranking_score").mean())
+                    if len(valid)
+                    else np.nan,
+                    "average_forward_abnormal_return": float(valid["_label"].mean())
+                    if len(valid)
+                    else np.nan,
                     "rank_ic": rank_ic,
                     "hit_rate": float((valid["_label"] > 0).mean()) if len(valid) else np.nan,
                     "spread": spread,
@@ -688,7 +807,9 @@ def build_score_component_contamination_audit(panel: pd.DataFrame) -> pd.DataFra
 
 
 def _top_bottom_spread(data: pd.DataFrame, score_col: str, label_col: str) -> float:
-    valid = data.assign(_score=_safe_num(data, score_col), _label=_safe_num(data, label_col)).dropna(subset=["_score", "_label"])
+    valid = data.assign(
+        _score=_safe_num(data, score_col), _label=_safe_num(data, label_col)
+    ).dropna(subset=["_score", "_label"])
     if len(valid) < MIN_DATE_SAMPLE:
         return np.nan
     median = valid["_score"].median()
@@ -723,12 +844,32 @@ def build_date_level_validation(panel: pd.DataFrame) -> pd.DataFrame:
         sufficient = len(data) >= MIN_DATE_SAMPLE
         for h in HORIZONS:
             label = f"fwd_abnormal_ret_{h}d"
-            valid = data.assign(_score=_safe_num(data, "ranking_score"), _label=_safe_num(data, label)).dropna(subset=["_score", "_label"])
-            row[f"rank_ic_{h}d"] = _corr(valid["_score"], valid["_label"], method="spearman") if sufficient and len(valid) >= MIN_DATE_SAMPLE else np.nan
-        row["top_bottom_spread_1d"] = _top_bottom_spread(data, "ranking_score", "fwd_abnormal_ret_1d") if sufficient else np.nan
-        row["top_bottom_spread_5d"] = _top_bottom_spread(data, "ranking_score", "fwd_abnormal_ret_5d") if sufficient else np.nan
+            valid = data.assign(
+                _score=_safe_num(data, "ranking_score"), _label=_safe_num(data, label)
+            ).dropna(subset=["_score", "_label"])
+            row[f"rank_ic_{h}d"] = (
+                _corr(valid["_score"], valid["_label"], method="spearman")
+                if sufficient and len(valid) >= MIN_DATE_SAMPLE
+                else np.nan
+            )
+        row["top_bottom_spread_1d"] = (
+            _top_bottom_spread(data, "ranking_score", "fwd_abnormal_ret_1d")
+            if sufficient
+            else np.nan
+        )
+        row["top_bottom_spread_5d"] = (
+            _top_bottom_spread(data, "ranking_score", "fwd_abnormal_ret_5d")
+            if sufficient
+            else np.nan
+        )
         row["positive_ic_flag"] = bool(not pd.isna(row["rank_ic_1d"]) and row["rank_ic_1d"] > 0)
-        row["extreme_outlier_flag"] = bool(any(abs(row.get(f"rank_ic_{h}d") or 0.0) >= 0.95 for h in HORIZONS if not pd.isna(row.get(f"rank_ic_{h}d"))))
+        row["extreme_outlier_flag"] = bool(
+            any(
+                abs(row.get(f"rank_ic_{h}d") or 0.0) >= 0.95
+                for h in HORIZONS
+                if not pd.isna(row.get(f"rank_ic_{h}d"))
+            )
+        )
         row["date_concentration_risk_flag"] = bool(total > 0 and len(data) / total >= 0.35)
         row["status"] = "ok" if sufficient else "insufficient_sample"
         rows.append(row)
@@ -767,7 +908,13 @@ def build_walk_forward_validation(panel: pd.DataFrame) -> pd.DataFrame:
     dates = list(work["_event_date"].drop_duplicates().sort_values())
     rows: list[dict[str, Any]] = []
     if len(dates) < 2:
-        rows.append({"split_id": "split_001", "status": "insufficient_sample", "limitation_reason": "fewer_than_two_event_dates"})
+        rows.append(
+            {
+                "split_id": "split_001",
+                "status": "insufficient_sample",
+                "limitation_reason": "fewer_than_two_event_dates",
+            }
+        )
         return pd.DataFrame(rows, columns=columns)
     for idx in range(1, len(dates)):
         train_dates = dates[:idx]
@@ -784,18 +931,34 @@ def build_walk_forward_validation(panel: pd.DataFrame) -> pd.DataFrame:
             "validation_rows": int(len(validation)),
             "validation_date_count": int(len(validation_dates)),
         }
-        if len(train) < MIN_WALK_FORWARD_TRAIN_ROWS or len(validation) < MIN_WALK_FORWARD_VALIDATION_ROWS:
+        if (
+            len(train) < MIN_WALK_FORWARD_TRAIN_ROWS
+            or len(validation) < MIN_WALK_FORWARD_VALIDATION_ROWS
+        ):
             row["status"] = "insufficient_sample"
             row["limitation_reason"] = "minimum_train_or_validation_rows_not_met"
         else:
             for h in HORIZONS:
                 label = f"fwd_abnormal_ret_{h}d"
-                valid = validation.assign(_score=_safe_num(validation, "ranking_score"), _label=_safe_num(validation, label)).dropna(subset=["_score", "_label"])
-                row[f"validation_rank_ic_{h}d"] = _corr(valid["_score"], valid["_label"], method="spearman") if len(valid) >= MIN_DATE_SAMPLE else np.nan
-                row[f"validation_top_bottom_spread_{h}d"] = _top_bottom_spread(validation, "ranking_score", label)
+                valid = validation.assign(
+                    _score=_safe_num(validation, "ranking_score"),
+                    _label=_safe_num(validation, label),
+                ).dropna(subset=["_score", "_label"])
+                row[f"validation_rank_ic_{h}d"] = (
+                    _corr(valid["_score"], valid["_label"], method="spearman")
+                    if len(valid) >= MIN_DATE_SAMPLE
+                    else np.nan
+                )
+                row[f"validation_top_bottom_spread_{h}d"] = _top_bottom_spread(
+                    validation, "ranking_score", label
+                )
             label_1d = _safe_num(validation, "fwd_abnormal_ret_1d")
-            row["validation_hit_rate"] = float((label_1d.dropna() > 0).mean()) if label_1d.notna().any() else np.nan
-            row["status"] = "ok" if not pd.isna(row.get("validation_rank_ic_1d")) else "insufficient_sample"
+            row["validation_hit_rate"] = (
+                float((label_1d.dropna() > 0).mean()) if label_1d.notna().any() else np.nan
+            )
+            row["status"] = (
+                "ok" if not pd.isna(row.get("validation_rank_ic_1d")) else "insufficient_sample"
+            )
             row["limitation_reason"] = "" if row["status"] == "ok" else "insufficient_valid_labels"
         rows.append(row)
     return pd.DataFrame(rows, columns=columns)
@@ -840,7 +1003,11 @@ def build_concentration_audit(panel: pd.DataFrame) -> pd.DataFrame:
     date_ratio = _dominance_ratio(work, "_event_date")
     sector_ratio = _dominance_ratio(work, "sector33_name")
     ticker_ratio = _dominance_ratio(work, "ticker")
-    repeated_tickers = int((work["ticker"].fillna("").astype(str).value_counts() > 1).sum()) if "ticker" in work else 0
+    repeated_tickers = (
+        int((work["ticker"].fillna("").astype(str).value_counts() > 1).sum())
+        if "ticker" in work
+        else 0
+    )
     duplicate_events = int(work.duplicated([c for c in ["ticker", "DiscDate"] if c in work]).sum())
     levels = [_risk_level(date_ratio), _risk_level(sector_ratio), _risk_level(ticker_ratio)]
     overall = "high" if "high" in levels else "medium" if "medium" in levels else "low"
@@ -883,11 +1050,25 @@ def score_leakage_safe_validation(
 ) -> dict[str, Any]:
     rows = len(panel)
     safe_rows = len(leakage_safe_panel)
-    unsafe_rows = int(panel["leakage_safety_status"].eq("unsafe").sum()) if "leakage_safety_status" in panel else 0
-    timing_limited_rows = int(panel["leakage_safety_status"].eq("timing_limited").sum()) if "leakage_safety_status" in panel else 0
+    unsafe_rows = (
+        int(panel["leakage_safety_status"].eq("unsafe").sum())
+        if "leakage_safety_status" in panel
+        else 0
+    )
+    timing_limited_rows = (
+        int(panel["leakage_safety_status"].eq("timing_limited").sum())
+        if "leakage_safety_status" in panel
+        else 0
+    )
     contamination_rows = int(len(contamination))
     safe_ratio = float(safe_rows / rows) if rows else 0.0
-    safe_score = min(100.0, safe_ratio * 55.0 + min(safe_rows / 250.0, 1.0) * 20.0 + (0 if unsafe_rows else 15.0) + (0 if timing_limited_rows else 10.0))
+    safe_score = min(
+        100.0,
+        safe_ratio * 55.0
+        + min(safe_rows / 250.0, 1.0) * 20.0
+        + (0 if unsafe_rows else 15.0)
+        + (0 if timing_limited_rows else 10.0),
+    )
     if unsafe_rows:
         safe_score = min(safe_score, 60.0)
     if contamination_rows:
@@ -908,17 +1089,39 @@ def score_leakage_safe_validation(
         strict_score = min(safe_score, 45.0)
         strict_status = _status_from_score(strict_score, rows=safe_rows)
         strict_reason = "pre_reaction_score_not_separately_available"
-    ok_splits = int(walk_forward["status"].eq("ok").sum()) if not walk_forward.empty and "status" in walk_forward else 0
-    insufficient_splits = int(walk_forward["status"].eq("insufficient_sample").sum()) if not walk_forward.empty and "status" in walk_forward else 0
+    ok_splits = (
+        int(walk_forward["status"].eq("ok").sum())
+        if not walk_forward.empty and "status" in walk_forward
+        else 0
+    )
+    insufficient_splits = (
+        int(walk_forward["status"].eq("insufficient_sample").sum())
+        if not walk_forward.empty and "status" in walk_forward
+        else 0
+    )
     split_count = int(len(walk_forward))
     wf_score = min(100.0, ok_splits * 18.0 + max(0, split_count - insufficient_splits) * 4.0)
     if ok_splits < 3:
         wf_score = min(wf_score, 35.0)
     wf_status = _status_from_score(wf_score, rows=split_count if split_count else 0)
-    sufficient_dates = int(date_level["status"].eq("ok").sum()) if not date_level.empty and "status" in date_level else 0
+    sufficient_dates = (
+        int(date_level["status"].eq("ok").sum())
+        if not date_level.empty and "status" in date_level
+        else 0
+    )
     date_count = int(len(date_level))
-    concentration_level = concentration.iloc[0].get("concentration_risk_level", "not_evaluable") if not concentration.empty else "not_evaluable"
-    integrity_score = min(100.0, safe_ratio * 35.0 + min(sufficient_dates / 8.0, 1.0) * 25.0 + min(ok_splits / 5.0, 1.0) * 25.0 + (15.0 if concentration_level in {"low", "medium"} else 0.0))
+    concentration_level = (
+        concentration.iloc[0].get("concentration_risk_level", "not_evaluable")
+        if not concentration.empty
+        else "not_evaluable"
+    )
+    integrity_score = min(
+        100.0,
+        safe_ratio * 35.0
+        + min(sufficient_dates / 8.0, 1.0) * 25.0
+        + min(ok_splits / 5.0, 1.0) * 25.0
+        + (15.0 if concentration_level in {"low", "medium"} else 0.0),
+    )
     if concentration_level == "high":
         integrity_score = min(integrity_score, 45.0)
     if not ranking_usable:
@@ -938,22 +1141,63 @@ def score_leakage_safe_validation(
         "pre_reaction_score_available": pre_reaction_available,
         "pre_reaction_score_basis": "not_available_without_clean_pre_reaction_numeric_score",
         "score_component_contamination_rows": contamination_rows,
-        "score_component_contamination_examples": contamination.head(5).to_dict(orient="records") if not contamination.empty else [],
+        "score_component_contamination_examples": contamination.head(5).to_dict(orient="records")
+        if not contamination.empty
+        else [],
         "walk_forward_validation_score": round(float(wf_score), 2),
         "walk_forward_validation_status": wf_status,
         "walk_forward_split_count": split_count,
         "walk_forward_insufficient_sample_splits": insufficient_splits,
+        # The commercial ranking_score is a fixed rule (no fitted parameters per
+        # split), so these "walk-forward" splits measure time-split STABILITY of a
+        # fixed score, not out-of-sample performance of a re-trained model.
+        "walk_forward_method": "fixed_score_time_split_stability",
+        "walk_forward_retrains_model": False,
         "validation_integrity_score": round(float(integrity_score), 2),
         "validation_integrity_status": _status_from_score(integrity_score, rows=rows),
         "number_of_validation_dates": date_count,
         "dates_with_sufficient_sample": sufficient_dates,
-        "median_date_level_ic": float(pd.to_numeric(date_level.get("rank_ic_1d", pd.Series(dtype=float)), errors="coerce").median()) if not date_level.empty else None,
-        "worst_date_level_ic": float(pd.to_numeric(date_level.get("rank_ic_1d", pd.Series(dtype=float)), errors="coerce").min()) if not date_level.empty else None,
-        "best_date_level_ic": float(pd.to_numeric(date_level.get("rank_ic_1d", pd.Series(dtype=float)), errors="coerce").max()) if not date_level.empty else None,
-        "concentration_risk_score": float(concentration.iloc[0].get("top_date_contribution_ratio", 0.0)) if not concentration.empty else 0.0,
-        "date_concentration_risk_level": concentration.iloc[0].get("date_concentration_risk_level", "not_evaluable") if not concentration.empty else "not_evaluable",
-        "sector_concentration_risk_level": concentration.iloc[0].get("sector_concentration_risk_level", "not_evaluable") if not concentration.empty else "not_evaluable",
-        "ticker_concentration_risk_level": concentration.iloc[0].get("ticker_concentration_risk_level", "not_evaluable") if not concentration.empty else "not_evaluable",
+        "median_date_level_ic": float(
+            pd.to_numeric(
+                date_level.get("rank_ic_1d", pd.Series(dtype=float)), errors="coerce"
+            ).median()
+        )
+        if not date_level.empty
+        else None,
+        "worst_date_level_ic": float(
+            pd.to_numeric(
+                date_level.get("rank_ic_1d", pd.Series(dtype=float)), errors="coerce"
+            ).min()
+        )
+        if not date_level.empty
+        else None,
+        "best_date_level_ic": float(
+            pd.to_numeric(
+                date_level.get("rank_ic_1d", pd.Series(dtype=float)), errors="coerce"
+            ).max()
+        )
+        if not date_level.empty
+        else None,
+        "concentration_risk_score": float(
+            concentration.iloc[0].get("top_date_contribution_ratio", 0.0)
+        )
+        if not concentration.empty
+        else 0.0,
+        "date_concentration_risk_level": concentration.iloc[0].get(
+            "date_concentration_risk_level", "not_evaluable"
+        )
+        if not concentration.empty
+        else "not_evaluable",
+        "sector_concentration_risk_level": concentration.iloc[0].get(
+            "sector_concentration_risk_level", "not_evaluable"
+        )
+        if not concentration.empty
+        else "not_evaluable",
+        "ticker_concentration_risk_level": concentration.iloc[0].get(
+            "ticker_concentration_risk_level", "not_evaluable"
+        )
+        if not concentration.empty
+        else "not_evaluable",
         "concentration_risk_level": concentration_level,
         "leakage_safe_validation_limitations": [
             item
@@ -962,6 +1206,7 @@ def score_leakage_safe_validation(
                 "timing_limited_rows_present" if timing_limited_rows else "",
                 "score_component_contamination" if contamination_rows else "",
                 "insufficient_walk_forward_splits" if ok_splits < 3 else "",
+                "walk_forward_is_fixed_score_time_split_not_retrained_oos",
                 "date_or_group_concentration" if concentration_level in {"high", "medium"} else "",
                 "small_leakage_safe_sample" if safe_rows < 50 else "",
             ]
@@ -978,17 +1223,40 @@ def _first_ok(df: pd.DataFrame, metric: str) -> float | None:
     return None if vals.empty else float(vals.iloc[0])
 
 
-def score_signal_validation(panel: pd.DataFrame, rank_ic: pd.DataFrame, quantile: pd.DataFrame, event_study: pd.DataFrame, liquidity: pd.DataFrame, neutral: pd.DataFrame, stability: pd.DataFrame) -> dict[str, Any]:
+def score_signal_validation(
+    panel: pd.DataFrame,
+    rank_ic: pd.DataFrame,
+    quantile: pd.DataFrame,
+    event_study: pd.DataFrame,
+    liquidity: pd.DataFrame,
+    neutral: pd.DataFrame,
+    stability: pd.DataFrame,
+) -> dict[str, Any]:
     rows = len(panel)
-    leakage = int(panel["leakage_risk_flag"].astype(bool).sum()) if "leakage_risk_flag" in panel else 0
+    leakage = (
+        int(panel["leakage_risk_flag"].astype(bool).sum()) if "leakage_risk_flag" in panel else 0
+    )
     eligible_ratio = float(panel["validation_eligible_flag"].astype(bool).mean()) if rows else 0.0
-    insufficient_sections = int(sum((not df.empty and "status" in df and df["status"].astype(str).str.contains("insufficient").any()) for df in [rank_ic, quantile, event_study, liquidity, neutral, stability]))
+    insufficient_sections = int(
+        sum(
+            (
+                not df.empty
+                and "status" in df
+                and df["status"].astype(str).str.contains("insufficient").any()
+            )
+            for df in [rank_ic, quantile, event_study, liquidity, neutral, stability]
+        )
+    )
     best_ic = abs(_first_ok(rank_ic, "rank_ic_spearman") or 0.0)
     best_spread = abs(_first_ok(quantile, "top_bottom_spread") or 0.0)
     event_support = abs(_first_ok(event_study, "t_stat") or 0.0)
     net = _first_ok(liquidity, "net_validation_spread")
     neutral_ic = abs(_first_ok(neutral, "sector_size_neutral_rank_ic") or 0.0)
-    stable_ok = 0.0 if stability.empty else float((stability.get("status", pd.Series(dtype=str)).eq("ok")).mean())
+    stable_ok = (
+        0.0
+        if stability.empty
+        else float((stability.get("status", pd.Series(dtype=str)).eq("ok")).mean())
+    )
     score = (
         min(rows / 250.0, 1.0) * 15
         + eligible_ratio * 15
@@ -1005,7 +1273,11 @@ def score_signal_validation(panel: pd.DataFrame, rank_ic: pd.DataFrame, quantile
         score = min(score, 35.0)
     if insufficient_sections >= 4:
         score = min(score, 45.0)
-    manual_ratio = float(panel["manual_review_required"].map(_truthy).mean()) if rows and "manual_review_required" in panel else 1.0
+    manual_ratio = (
+        float(panel["manual_review_required"].map(_truthy).mean())
+        if rows and "manual_review_required" in panel
+        else 1.0
+    )
     if manual_ratio > 0.5:
         score = min(score, 55.0)
     score = round(float(max(0.0, min(100.0, score))), 2)
@@ -1040,7 +1312,9 @@ def _summary_payload(
     stability: pd.DataFrame,
     leakage_safe_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    score = score_signal_validation(panel, rank_ic, quantile, event_study, liquidity, neutral, stability)
+    score = score_signal_validation(
+        panel, rank_ic, quantile, event_study, liquidity, neutral, stability
+    )
     return {
         "generated_at_jst": jst_now_iso(),
         **score,
@@ -1048,15 +1322,27 @@ def _summary_payload(
         "rank_ic_available": bool(not rank_ic.empty),
         "rank_ic_summary": rank_ic.head(5).to_dict(orient="records") if not rank_ic.empty else [],
         "quantile_spread_available": bool(not quantile.empty),
-        "quantile_spread_summary": quantile.head(5).to_dict(orient="records") if not quantile.empty else [],
+        "quantile_spread_summary": quantile.head(5).to_dict(orient="records")
+        if not quantile.empty
+        else [],
         "event_study_available": bool(not event_study.empty),
-        "event_study_summary": event_study.head(5).to_dict(orient="records") if not event_study.empty else [],
-        "net_spread_after_cost_available": bool(not liquidity.empty and "net_validation_spread" in liquidity),
-        "liquidity_cost_summary": liquidity.head(5).to_dict(orient="records") if not liquidity.empty else [],
+        "event_study_summary": event_study.head(5).to_dict(orient="records")
+        if not event_study.empty
+        else [],
+        "net_spread_after_cost_available": bool(
+            not liquidity.empty and "net_validation_spread" in liquidity
+        ),
+        "liquidity_cost_summary": liquidity.head(5).to_dict(orient="records")
+        if not liquidity.empty
+        else [],
         "sector_size_neutral_validation_available": bool(not neutral.empty),
-        "sector_size_neutral_summary": neutral.head(5).to_dict(orient="records") if not neutral.empty else [],
+        "sector_size_neutral_summary": neutral.head(5).to_dict(orient="records")
+        if not neutral.empty
+        else [],
         "stability_validation_available": bool(not stability.empty),
-        "stability_summary": stability.head(5).to_dict(orient="records") if not stability.empty else [],
+        "stability_summary": stability.head(5).to_dict(orient="records")
+        if not stability.empty
+        else [],
     }
 
 
@@ -1067,28 +1353,32 @@ def _write_csv(path: Path, df: pd.DataFrame) -> None:
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     ensure_parent(path)
-    path.write_text(json.dumps(_json_clean(payload), ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    path.write_text(
+        json.dumps(_json_clean(payload), ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
 
 
 def _markdown(summary: dict[str, Any]) -> str:
+    s = summary
     return f"""# Commercial Signal Validation
 
-Status: **{summary.get('finance_grade_signal_validation_status')}**
+Status: **{summary.get("finance_grade_signal_validation_status")}**
 
-Finance-grade signal validation score: **{summary.get('finance_grade_signal_validation_score')}**
+Finance-grade signal validation score: **{summary.get("finance_grade_signal_validation_score")}**
 
-- Panel rows: `{summary.get('validation_panel_rows')}`
-- Leakage risk rows: `{summary.get('leakage_risk_rows')}`
-- Insufficient sample sections: `{summary.get('insufficient_sample_sections')}`
-- Rank IC available: `{summary.get('rank_ic_available')}`
-- Quantile spread available: `{summary.get('quantile_spread_available')}`
-- Event-study available: `{summary.get('event_study_available')}`
-- Net spread after cost available: `{summary.get('net_spread_after_cost_available')}`
-- Sector/size neutral validation available: `{summary.get('sector_size_neutral_validation_available')}`
-- Stability validation available: `{summary.get('stability_validation_available')}`
-- Leakage-safe status: `{summary.get('leakage_safe_signal_validation_status')}`
-- Strict pre-reaction status: `{summary.get('strict_pre_reaction_validation_status')}`
-- Walk-forward status: `{summary.get('walk_forward_validation_status')}`
+- Panel rows: `{summary.get("validation_panel_rows")}`
+- Leakage risk rows: `{summary.get("leakage_risk_rows")}`
+- Insufficient sample sections: `{summary.get("insufficient_sample_sections")}`
+- Rank IC available: `{summary.get("rank_ic_available")}`
+- Quantile spread available: `{summary.get("quantile_spread_available")}`
+- Event-study available: `{summary.get("event_study_available")}`
+- Net spread after cost available: `{summary.get("net_spread_after_cost_available")}`
+- Sector/size neutral validation available: `{s.get("sector_size_neutral_validation_available")}`
+- Stability validation available: `{summary.get("stability_validation_available")}`
+- Leakage-safe status: `{summary.get("leakage_safe_signal_validation_status")}`
+- Strict pre-reaction status: `{summary.get("strict_pre_reaction_validation_status")}`
+- Walk-forward status: `{summary.get("walk_forward_validation_status")}`
 
 This report is a research validation diagnostic only.
 """
@@ -1096,23 +1386,25 @@ This report is a research validation diagnostic only.
 
 def _leakage_safe_markdown(summary: dict[str, Any]) -> str:
     limitations = summary.get("leakage_safe_validation_limitations") or []
-    limitation_lines = "\n".join(f"- `{item}`" for item in limitations) if limitations else "- `none_detected`"
+    limitation_lines = (
+        "\n".join(f"- `{item}`" for item in limitations) if limitations else "- `none_detected`"
+    )
     return f"""# Commercial Leakage-Safe Validation
 
-Leakage-safe status: **{summary.get('leakage_safe_signal_validation_status')}**
+Leakage-safe status: **{summary.get("leakage_safe_signal_validation_status")}**
 
-Strict pre-reaction status: **{summary.get('strict_pre_reaction_validation_status')}**
+Strict pre-reaction status: **{summary.get("strict_pre_reaction_validation_status")}**
 
-Walk-forward status: **{summary.get('walk_forward_validation_status')}**
+Walk-forward status: **{summary.get("walk_forward_validation_status")}**
 
-- Leakage-safe score: `{summary.get('leakage_safe_signal_validation_score')}`
-- Leakage-safe panel rows: `{summary.get('leakage_safe_panel_rows')}`
-- Excluded unsafe rows: `{summary.get('excluded_unsafe_rows')}`
-- Timing-limited rows: `{summary.get('timing_limited_rows')}`
-- Score component contamination rows: `{summary.get('score_component_contamination_rows')}`
-- Walk-forward splits: `{summary.get('walk_forward_split_count')}`
-- Insufficient walk-forward splits: `{summary.get('walk_forward_insufficient_sample_splits')}`
-- Validation integrity status: `{summary.get('validation_integrity_status')}`
+- Leakage-safe score: `{summary.get("leakage_safe_signal_validation_score")}`
+- Leakage-safe panel rows: `{summary.get("leakage_safe_panel_rows")}`
+- Excluded unsafe rows: `{summary.get("excluded_unsafe_rows")}`
+- Timing-limited rows: `{summary.get("timing_limited_rows")}`
+- Score component contamination rows: `{summary.get("score_component_contamination_rows")}`
+- Walk-forward splits: `{summary.get("walk_forward_split_count")}`
+- Insufficient walk-forward splits: `{summary.get("walk_forward_insufficient_sample_splits")}`
+- Validation integrity status: `{summary.get("validation_integrity_status")}`
 
 ## Top Limitations
 
@@ -1136,13 +1428,21 @@ def build_commercial_signal_validation(
     liquidity = build_liquidity_cost(panel)
     neutral = build_sector_size_neutral(panel)
     stability = build_stability(panel)
-    leakage_safe_panel = panel[panel["leakage_safe_flag"].astype(bool)].copy() if "leakage_safe_flag" in panel else panel.iloc[0:0].copy()
+    leakage_safe_panel = (
+        panel[panel["leakage_safe_flag"].astype(bool)].copy()
+        if "leakage_safe_flag" in panel
+        else panel.iloc[0:0].copy()
+    )
     contamination = build_score_component_contamination_audit(panel)
     walk_forward = build_walk_forward_validation(leakage_safe_panel)
     date_level = build_date_level_validation(leakage_safe_panel)
     concentration = build_concentration_audit(leakage_safe_panel)
-    leakage_safe_summary = score_leakage_safe_validation(panel, leakage_safe_panel, walk_forward, date_level, contamination, concentration)
-    summary = _summary_payload(panel, rank_ic, quantile, event_study, liquidity, neutral, stability, leakage_safe_summary)
+    leakage_safe_summary = score_leakage_safe_validation(
+        panel, leakage_safe_panel, walk_forward, date_level, contamination, concentration
+    )
+    summary = _summary_payload(
+        panel, rank_ic, quantile, event_study, liquidity, neutral, stability, leakage_safe_summary
+    )
 
     _write_csv(output_dir / OUTPUT_FILES["panel"], panel)
     _write_csv(output_dir / OUTPUT_FILES["rank_ic"], rank_ic)
@@ -1161,7 +1461,9 @@ def build_commercial_signal_validation(
     ensure_parent(output_dir / OUTPUT_FILES["report"])
     (output_dir / OUTPUT_FILES["report"]).write_text(_markdown(summary), encoding="utf-8")
     ensure_parent(output_dir / OUTPUT_FILES["leakage_safe_report"])
-    (output_dir / OUTPUT_FILES["leakage_safe_report"]).write_text(_leakage_safe_markdown(leakage_safe_summary), encoding="utf-8")
+    (output_dir / OUTPUT_FILES["leakage_safe_report"]).write_text(
+        _leakage_safe_markdown(leakage_safe_summary), encoding="utf-8"
+    )
     return _json_clean(summary)
 
 
