@@ -54,7 +54,11 @@ from jp_stock_analysis.modeling.neutralization import (
     mmc_style_contribution,
     neutralized_rank_ic,
 )
-from jp_stock_analysis.modeling.out_of_sample import LinearOOSRun, linear_walk_forward_oos
+from jp_stock_analysis.modeling.out_of_sample import (
+    LinearOOSRun,
+    OOSResult,
+    linear_walk_forward_oos,
+)
 from jp_stock_analysis.modeling.portfolio_metrics import (
     STATUS_OK as PORTFOLIO_STATUS_OK,
 )
@@ -282,6 +286,7 @@ def build_model_diversity(
     horizon: int,
     n_quantiles: int,
     prices: Mapping[str, Sequence[PriceBar]] | None = None,
+    linear_runs: Mapping[str, LinearOOSRun] | None = None,
 ) -> dict[str, Any]:
     """Linear baselines, ensemble/blend, stability, and feature importance.
 
@@ -289,15 +294,24 @@ def build_model_diversity(
     purged walk-forward OOS folds, ensembles their OOS scores with the baseline,
     summarises walk-forward stability, and reports feature importance. Research diagnostics only.
     """
-    ridge_run, ridge_scored = _train_linear(
-        dataset, horizon, lambda: RidgeRanker(alpha=1.0), prices
-    )
-    elastic_run, elastic_scored = _train_linear(
-        dataset,
-        horizon,
-        lambda: ElasticNetRanker(alpha=0.05, l1_ratio=0.5, max_iter=2000),
-        prices,
-    )
+    if linear_runs is None:
+        ridge_run, _ = _train_linear(dataset, horizon, lambda: RidgeRanker(alpha=1.0), prices)
+        elastic_run, _ = _train_linear(
+            dataset, horizon, lambda: ElasticNetRanker(alpha=0.05, l1_ratio=0.5, max_iter=2000),
+            prices,
+        )
+    else:
+        def selected_run(name: str) -> LinearOOSRun:
+            if name in linear_runs:
+                return linear_runs[name]
+            return LinearOOSRun(OOSResult(
+                horizon=horizon, scored=[], status="disabled", message="model disabled in pipeline"
+            ))
+
+        ridge_run = selected_run("ridge")
+        elastic_run = selected_run("elastic_net")
+    ridge_scored, elastic_scored = ridge_run.result.scored, elastic_run.result.scored
+
     ridge, elastic = ridge_run.last_model, elastic_run.last_model
 
     predictions = {
@@ -358,14 +372,17 @@ def build_model_diversity(
             is_synthetic=dataset.is_synthetic,
         )
 
+    def linear_summary(model: Any, run: LinearOOSRun) -> dict[str, Any]:
+        summary = _linear_summary(model)
+        if run.result.status == "disabled":
+            summary.update(status="disabled", warnings=[run.result.message])
+        return {**summary, "oos": run.result.to_dict()}
+
     return {
         "horizon": horizon,
         "linear_models": {
-            "ridge": {**_linear_summary(ridge), "oos": ridge_run.result.to_dict()},
-            "elastic_net": {
-                **_linear_summary(elastic),
-                "oos": elastic_run.result.to_dict(),
-            },
+            "ridge": linear_summary(ridge, ridge_run),
+            "elastic_net": linear_summary(elastic, elastic_run),
         },
         "ensemble": {
             "rank_average": {**ensemble.to_dict(), "ic_mean": ensemble_ic},
@@ -546,6 +563,7 @@ def build_modeling_report(
     neutralize_proportion: float = 1.0,
     primary: PrimaryModelResult | None = None,
     primary_model: str = MODEL_TREE_ENSEMBLE,
+    linear_runs: Mapping[str, LinearOOSRun] | None = None,
 ) -> ModelingReport:
     """Build the full modeling report from a dataset and its price inputs.
 
@@ -564,6 +582,7 @@ def build_modeling_report(
             prices=prices,
             n_quantiles=n_quantiles,
         )
+    primary_horizon = primary.horizon
     primary_scored = primary.scored
     # reuse already-trained OOS members (same horizon) instead of retraining
     model_cache: dict[str, ModelResult] = {
@@ -598,7 +617,8 @@ def build_modeling_report(
     )
 
     comparison = _model_comparison(
-        dataset, horizons, n_quantiles, include_optional_models, prices, model_cache
+        dataset, horizons, n_quantiles, include_optional_models, prices, model_cache,
+        primary_horizon=primary_horizon,
     )
 
     # JPX-style long-short evaluation per horizon
@@ -642,6 +662,7 @@ def build_modeling_report(
         horizon=primary_horizon,
         n_quantiles=n_quantiles,
         prices=prices,
+        linear_runs=linear_runs,
     )
 
     model_versions = ["baseline_factor_ranker_v1"] + [
@@ -768,11 +789,13 @@ def _model_comparison(
     include_optional_models: bool,
     prices: Mapping[str, Sequence[PriceBar]] | None = None,
     cache: dict[str, ModelResult] | None = None,
+    *,
+    primary_horizon: int | None = None,
 ) -> list[ModelComparisonEntry]:
     model_types = (
         list(MODEL_TYPES) if include_optional_models else [MODEL_BASELINE]
     )
-    primary_horizon = sorted({int(h) for h in horizons})[0]
+    primary_horizon = primary_horizon or sorted({int(h) for h in horizons})[0]
     cache = cache if cache is not None else {}
     results = [
         _cached_model(
