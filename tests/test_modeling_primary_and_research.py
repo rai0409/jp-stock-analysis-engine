@@ -311,3 +311,65 @@ def test_pipeline_report_does_not_retrain_disabled_linear_models(tmp_path, monke
         assert model["status"] == "disabled"
         assert model["oos"]["status"] == "disabled"
         assert model["oos"]["oos_scored_count"] == 0
+
+
+@needs_trees
+def test_tree_backend_cli_e2e_artifacts(tmp_path):
+    """Exercise actual installed backends and validate persisted synthetic outputs."""
+    import csv
+    import math
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    output = Path(os.environ.get("TREE_E2E_OUTPUT", str(tmp_path)))
+    subprocess.run(
+        [
+            sys.executable, "-m", "jp_stock_analysis.cli", "run-modeling-pipeline",
+            "--synthetic", "--primary-model", "tree_ensemble", "--tree-members",
+            "lightgbm_regressor,catboost_regressor", "--tree-n-jobs", "1",
+            "--run-id", "tree-e2e", "--fixed-timestamp", STAMP, "--output-dir", str(output),
+        ],
+        check=True, timeout=300,
+    )
+    root = output / "tree-e2e"
+
+    def read(name):
+        return json.loads((root / name).read_text(encoding="utf-8"))
+
+    primary = read("primary/primary_model.json")
+    assert primary["model_label"] == MODEL_TREE_ENSEMBLE
+    assert primary["fallback_used"] is False
+    assert primary["validation"] == "walk_forward_purged_oos"
+    assert primary["scored_count"] > 0
+    for name in ("lightgbm_regressor", "catboost_regressor"):
+        member = primary["members"][name]
+        assert member["status"] == "trained"
+        assert member["validation"] == "walk_forward_purged_oos"
+        assert member["scored_count"] > 0
+        assert any(fold["status"] == "ok" for fold in member["oos_folds"])
+        assert all(fold["train_end"] < fold["test_start"] for fold in member["oos_folds"])
+    ridge = primary["members"]["ridge"]
+    assert ridge["validation"] == "walk_forward_purged_oos"
+    assert ridge["status"] == "ok" and ridge["oos_scored_count"] > 0
+    assert any(fold["status"] == "ok" for fold in ridge["folds"])
+    with (root / "primary/predictions.csv").open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == primary["scored_count"]
+    keys = [(row["ticker"], row["decision_date"]) for row in rows]
+    assert len(set(keys)) == len(keys)
+    assert all(math.isfinite(float(row["oos_score"])) for row in rows)
+    assert min(build_synthetic_bundle().decision_dates).isoformat() not in {
+        row["decision_date"] for row in rows
+    }
+    report = read("modeling_report.json")
+    assert report["primary_model"]["model_label"] == primary["model_label"]
+    assert report["primary_model"]["fallback_used"] is False
+    assert read("ranking/ranking_metrics.json")["model_label"] == primary["model_label"]
+    summary = read("pipeline_summary.json")
+    assert summary["primary_model"] == primary["model_label"]
+    steps = {step["name"]: step["status"] for step in summary["steps"]}
+    assert all(steps[name] == "ok" for name in (
+        "train_primary_model", "evaluate_ranking", "build_modeling_report",
+    ))

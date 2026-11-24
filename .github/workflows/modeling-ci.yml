@@ -52,3 +52,55 @@ jobs:
           name: synthetic-regression-diagnostics
           path: ${{ runner.temp }}/diagnostic
           retention-days: 3
+
+  tree-backend-e2e:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYTHONPATH: ${{ github.workspace }}/src
+      PYTHONDONTWRITEBYTECODE: '1'
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+      TREE_E2E_OUTPUT: ${{ runner.temp }}/tree-backend-e2e
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install tree dependencies
+        run: >-
+          python -m pip install '.[dev,all-modeling]' 'numpy==2.4.6' 'pandas==3.0.3'
+          'pytest==9.0.3' 'ruff==0.15.16' 'lightgbm==4.7.0' 'catboost==1.2.10'
+          'scikit-learn==1.9.1'
+      - name: Check real dependencies
+        run: |
+          python -m pip check
+          python -c 'import lightgbm, catboost, sklearn; from jp_stock_analysis.modeling.ml_models import backend_available; print(lightgbm.__version__, catboost.__version__, sklearn.__version__); assert backend_available("lightgbm") and backend_available("catboost")'
+      - name: Test real tree models and CLI artifacts
+        run: >-
+          python -m pytest -q --junitxml="$RUNNER_TEMP/tree-tests.xml"
+          tests/test_modeling_out_of_sample.py::test_tree_model_scores_only_held_out_dates
+          tests/test_modeling_out_of_sample.py::test_tree_model_is_deterministic
+          tests/test_modeling_out_of_sample.py::test_tree_model_refuses_when_purge_leaves_no_training_rows
+          tests/test_modeling_primary_and_research.py::test_primary_default_is_oos_tree_ensemble
+          tests/test_modeling_primary_and_research.py::test_pipeline_downstream_steps_use_primary_model
+          tests/test_modeling_trading_features.py::test_tree_ensemble_uses_extended_features
+          tests/test_modeling_trading_features.py::test_refit_every_groups_test_dates_per_fold
+          tests/test_modeling_primary_and_research.py::test_tree_backend_cli_e2e_artifacts
+      - name: Reject skipped tree tests
+        run: >-
+          python -c 'import os, xml.etree.ElementTree as e; s=e.parse(os.environ["RUNNER_TEMP"] + "/tree-tests.xml").getroot(); c=s.findall(".//testcase"); assert len(c) == 17 and not any(t.find("skipped") is not None for t in c), "tree tests must all execute"'
+      - name: Upload synthetic tree artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tree-backend-e2e
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/tree-backend-e2e/tree-e2e/primary/primary_model.json
+            ${{ runner.temp }}/tree-backend-e2e/tree-e2e/primary/predictions.csv
+            ${{ runner.temp }}/tree-backend-e2e/tree-e2e/modeling_report.json
+            ${{ runner.temp }}/tree-backend-e2e/tree-e2e/ranking/ranking_metrics.json
+            ${{ runner.temp }}/tree-backend-e2e/tree-e2e/pipeline_summary.json
