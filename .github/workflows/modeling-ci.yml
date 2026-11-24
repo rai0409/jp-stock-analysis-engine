@@ -63,7 +63,6 @@ jobs:
       OMP_NUM_THREADS: '1'
       OPENBLAS_NUM_THREADS: '1'
       MKL_NUM_THREADS: '1'
-      TREE_E2E_OUTPUT: ${{ runner.temp }}/tree-backend-e2e
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -79,6 +78,8 @@ jobs:
           python -m pip check
           python -c 'import lightgbm, catboost, sklearn; from jp_stock_analysis.modeling.ml_models import backend_available; print(lightgbm.__version__, catboost.__version__, sklearn.__version__); assert backend_available("lightgbm") and backend_available("catboost")'
       - name: Test real tree models and CLI artifacts
+        env:
+          TREE_E2E_OUTPUT: ${{ runner.temp }}/tree-backend-e2e
         run: >-
           python -m pytest -q --junitxml="$RUNNER_TEMP/tree-tests.xml"
           tests/test_modeling_out_of_sample.py::test_tree_model_scores_only_held_out_dates
