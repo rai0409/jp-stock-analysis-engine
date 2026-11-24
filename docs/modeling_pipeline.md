@@ -166,3 +166,9 @@ and the test-suite still passes — they are never required for a minimal instal
 - Real-data audit bundles require `check-forward-readiness=ELIGIBLE` before any
   predictive interpretation; P0 strict no-look-ahead remains required before
   predictive claims.
+
+The `tree-backend-e2e` CI job installs the optional `all-modeling` backends and
+runs synthetic purged OOS and CLI artifact checks with LightGBM and CatBoost.
+It rejects missing backends and skipped tree tests. The separate core-only golden
+regression remains independent of these optional libraries. Neither job measures
+market prediction performance.
